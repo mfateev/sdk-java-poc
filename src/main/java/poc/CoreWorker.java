@@ -1,0 +1,89 @@
+package poc;
+
+import io.grpc.Channel;
+import org.rustlang.runtime.Pointer;
+import temporal_java_bridge.temporal_java_bridge;
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+
+/** Runs a workflow-only SDK Core worker on a caller-owned Java gRPC channel. */
+public final class CoreWorker implements AutoCloseable {
+    @FunctionalInterface
+    public interface ActivationHandler {
+        /** Accepts a serialized WorkflowActivation and returns a serialized WorkflowActivationCompletion. */
+        byte[] activate(byte[] activation) throws Exception;
+    }
+
+    private static final AtomicLong NEXT = new AtomicLong(1);
+    private final long context = NEXT.getAndIncrement();
+    private final CompletableFuture<Void> completion = new CompletableFuture<>();
+
+    public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler) {
+        if (namespace.isBlank() || taskQueue.isBlank()) {
+            throw new IllegalArgumentException("namespace and task queue must be nonempty");
+        }
+        byte[] config = options(namespace, taskQueue);
+        JavaHost host = new JavaHost(Objects.requireNonNull(channel), Objects.requireNonNull(handler));
+        if (!temporal_java_bridge.register_worker(context)) {
+            throw new IllegalStateException("Core worker ID already registered");
+        }
+        JavaHost.attach(context, host);
+        Thread thread = new Thread(() -> {
+            Throwable failure;
+            try {
+                temporal_java_bridge.run_worker(context, Pointer.array(config, 0, 1), config.length);
+                failure = host.failure;
+            } catch (Throwable error) {
+                failure = error;
+            } finally {
+                temporal_java_bridge.forget_worker(context);
+                JavaHost.detach(context);
+            }
+            if (failure == null) completion.complete(null);
+            else completion.completeExceptionally(failure);
+        }, "temporal-sdk-core-" + context);
+        thread.start();
+    }
+
+    /** Exercises the Java transport by connecting a Core client and reading server capabilities. */
+    public static void verifyTransport(Channel channel) {
+        long context = NEXT.getAndIncrement();
+        JavaHost host = new JavaHost(Objects.requireNonNull(channel), activation -> {
+            throw new IllegalStateException("connection probe has no workflow handler");
+        });
+        JavaHost.attach(context, host);
+        try {
+            temporal_java_bridge.probe_transport(context);
+            if (host.failure != null) throw new IllegalStateException("Core transport probe failed", host.failure);
+        } finally {
+            JavaHost.detach(context);
+        }
+    }
+
+    public CompletableFuture<Void> completion() {
+        return completion.copy();
+    }
+
+    @Override public void close() {
+        temporal_java_bridge.shutdown_worker(context);
+    }
+
+    private static byte[] options(String namespace, String queue) {
+        try {
+            var bytes = new ByteArrayOutputStream();
+            var output = new DataOutputStream(bytes);
+            JavaHost.writeField(output, namespace.getBytes(StandardCharsets.UTF_8));
+            JavaHost.writeField(output, queue.getBytes(StandardCharsets.UTF_8));
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+}

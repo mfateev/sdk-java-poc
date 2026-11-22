@@ -1,0 +1,11 @@
+--- a/src/codec/compression.rs
++++ b/src/codec/compression.rs
+@@ -71,7 +71,7 @@
+ 
+     pub(crate) fn into_accept_encoding_header_value(self) -> Option<http::HeaderValue> {
+         let mut value = BytesMut::new();
+-        for encoding in self.inner.into_iter().flatten() {
++        for encoding in self.inner.iter().copied().flatten() {
+             value.put_slice(encoding.as_str().as_bytes());
+             value.put_u8(b',');
+         }

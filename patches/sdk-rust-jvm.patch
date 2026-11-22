@@ -1,0 +1,692 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index dd66fd88..95763da4 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4545,6 +4545,7 @@ dependencies = [
+  "futures",
+  "futures-util",
+  "gethostname",
++ "getrandom 0.4.3",
+  "http-body-util",
+  "hyper",
+  "hyper-util",
+diff --git a/Cargo.toml b/Cargo.toml
+index 481cf594..aa43c3e0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -41,6 +41,7 @@ nexus-rpc = "0.1.0"
+ 
+ [workspace.lints.rust]
+ unreachable_pub = "warn"
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("jvm"))'] }
+ 
+ [workspace.lints.clippy]
+ dbg_macro = "warn"
+diff --git a/crates/client/Cargo.toml b/crates/client/Cargo.toml
+index bc7af3ad..244bc8d9 100644
+--- a/crates/client/Cargo.toml
++++ b/crates/client/Cargo.toml
+@@ -40,22 +40,16 @@ futures-retry = "0.6.0"
+ http = "1.3"
+ http-body-util = "0.1"
+ hyper = { version = "1.7.0" }
+-hyper-util = "0.1.16"
+ opentelemetry = { workspace = true, features = ["metrics"], optional = true }
+ parking_lot = "0.12"
+ thiserror = { workspace = true }
+ tokio = { version = "1.47", default-features = false, features = [
+   "io-util",
+-  "net",
+   "rt",
+   "sync",
+   "time",
+ ] }
+-tonic = { workspace = true, default-features = false, features = [
+-  "tls-native-roots",
+-  "channel",
+-  "gzip",
+-] }
++tonic = { workspace = true, default-features = false, features = ["gzip"] }
+ tokio-rustls = { version = "0.26", default-features = false }
+ rustls-native-certs = { version = "0.8", optional = true }
+ tower = { version = "0.5", features = ["util"] }
+@@ -71,6 +65,11 @@ version = "~1.2.0"
+ default-features = false
+ features = ["serde_serialize"]
+ 
++[target.'cfg(not(target_os = "jvm"))'.dependencies]
++hyper-util = "0.1.16"
++tokio = { version = "1.47", default-features = false, features = ["net"] }
++tonic = { workspace = true, default-features = false, features = ["tls-native-roots", "channel"] }
++
+ [dev-dependencies]
+ assert_matches = "1"
+ hyper = { version = "1.7.0", features = ["http1", "server"] }
+diff --git a/crates/client/src/errors.rs b/crates/client/src/errors.rs
+index e958511b..7c052697 100644
+--- a/crates/client/src/errors.rs
++++ b/crates/client/src/errors.rs
+@@ -37,6 +37,7 @@ pub enum ClientConnectError {
+     #[error("Invalid headers: {0}")]
+     InvalidHeaders(#[from] InvalidHeaderError),
+     /// Server connection error. Crashing and restarting the worker is likely best.
++    #[cfg(not(target_os = "jvm"))]
+     #[error("Server connection error: {0:?}")]
+     TonicTransportError(#[from] tonic::transport::Error),
+     /// We couldn't successfully make the `get_system_info` call at connection time to establish
+diff --git a/crates/client/src/lib.rs b/crates/client/src/lib.rs
+index 70802453..0e426600 100644
+--- a/crates/client/src/lib.rs
++++ b/crates/client/src/lib.rs
+@@ -11,6 +11,7 @@ extern crate tracing;
+ mod activity;
+ mod async_activity_handle;
+ pub mod callback_based;
++#[cfg(not(target_os = "jvm"))]
+ mod dns;
+ /// Configuration loading from environment variables and TOML files.
+ #[cfg(feature = "envconfig")]
+@@ -24,6 +25,7 @@ mod options_structs;
+ #[cfg(feature = "experimental")]
+ /// Experimental APIs for configuring clients with reusable plugins.
+ pub mod plugins;
++#[cfg(not(target_os = "jvm"))]
+ mod proxy;
+ mod replaceable;
+ pub mod request_extensions;
+@@ -37,7 +39,7 @@ pub mod worker;
+ mod workflow_handle;
+ mod workflow_status;
+ 
+-pub use crate::{proxy::HttpConnectProxyOptions, request_extensions::PayloadErrorLimits};
++pub use crate::request_extensions::PayloadErrorLimits;
+ pub use activity::*;
+ pub use async_activity_handle::{
+     ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle,
+@@ -119,6 +121,7 @@ use futures_util::{
+     stream,
+     stream::Stream,
+ };
++#[cfg(not(target_os = "jvm"))]
+ use http::Uri;
+ use parking_lot::RwLock;
+ use std::{
+@@ -168,6 +171,8 @@ use temporalio_common::{
+     },
+     search_attributes::{SearchAttributeError, SearchAttributeValue, SearchAttributes},
+ };
++#[cfg(not(target_os = "jvm"))]
++use tonic::transport::{Certificate, Endpoint, Identity};
+ use tonic::{
+     Code, IntoRequest,
+     body::Body,
+@@ -179,8 +184,8 @@ use tonic::{
+         MetadataValue,
+     },
+     service::Interceptor,
+-    transport::{Certificate, Endpoint, Identity},
+ };
++#[cfg(not(target_os = "jvm"))]
+ use tower::ServiceBuilder;
+ use uuid::Uuid;
+ 
+@@ -221,6 +226,7 @@ struct ConnectionInner {
+     /// Capabilities as read from the `get_system_info` RPC call made on client connection
+     capabilities: Option<get_system_info_response::Capabilities>,
+     workers: Arc<ClientWorkerSet>,
++    #[cfg(not(target_os = "jvm"))]
+     _dns_task: Option<Arc<dns::DnsReresolutionHandle>>,
+     /// Configured payload/memo size warning thresholds (bytes); `0` disables that warning.
+     payloads_warn_size: usize,
+@@ -268,16 +274,20 @@ impl Connection {
+     }
+ 
+     async fn connect_once(options: &ConnectionOptions) -> Result<Self, ClientConnectError> {
++        #[cfg(not(target_os = "jvm"))]
+         let dns_lb_opts = dns::validate_and_get_dns_lb(options)?.cloned();
+-        let (service, dns_task) = if let Some(service_override) = options.service_override.clone() {
+-            (
+-                GrpcMetricSvc {
++        let grpc_override =
++            options
++                .service_override
++                .clone()
++                .map(|service_override| GrpcMetricSvc {
+                     inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
+                     metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                     disable_errcode_label: options.disable_error_code_metric_tags,
+-                },
+-                None,
+-            )
++                });
++        #[cfg(not(target_os = "jvm"))]
++        let (service, dns_task) = if let Some(service) = grpc_override {
++            (service, None)
+         } else if let Some(dns_opts) = &dns_lb_opts {
+             let (channel, sender) = dns::create_balanced_channel(options).await?;
+             let handle = dns::spawn_dns_reresolution(
+@@ -383,6 +393,12 @@ impl Connection {
+                 None,
+             )
+         };
++        #[cfg(target_os = "jvm")]
++        let service = grpc_override.ok_or_else(|| {
++            ClientConnectError::InvalidConfig(
++                "A gRPC service override is required on the JVM".to_owned(),
++            )
++        })?;
+ 
+         let headers = Arc::new(RwLock::new(ClientHeaders {
+             user_headers: parse_ascii_headers(options.headers.clone().unwrap_or_default())?,
+@@ -443,6 +459,7 @@ impl Connection {
+                 client_version: options.client_version.clone(),
+                 capabilities,
+                 workers: Arc::new(ClientWorkerSet::new()),
++                #[cfg(not(target_os = "jvm"))]
+                 _dns_task: dns_task,
+                 payloads_warn_size: resolve_warn_threshold(
+                     "payloads_warn_size",
+@@ -595,6 +612,7 @@ impl ClientHeaders {
+ /// Result of TLS configuration: either standard tonic TLS was applied to the endpoint,
+ /// or a custom rustls config is needed for dynamic certificate resolution.
+ #[derive(Debug)]
++#[cfg(not(target_os = "jvm"))]
+ enum TlsConfigResult {
+     /// Standard tonic TLS was applied, endpoint is ready to connect normally.
+     Standard(Endpoint),
+@@ -617,6 +635,7 @@ enum TlsConfigResult {
+ /// static client certificates). In that case, we return `TlsConfigResult::CustomConnector`
+ /// with a manually-built `rustls::ClientConfig` that the caller must use with
+ /// `connect_with_connector`.
++#[cfg(not(target_os = "jvm"))]
+ async fn add_tls_to_channel(
+     tls_options: Option<&TlsOptions>,
+     mut channel: Endpoint,
+@@ -706,7 +725,7 @@ async fn add_tls_to_channel(
+     Ok(TlsConfigResult::Standard(channel))
+ }
+ 
+-#[cfg(feature = "dynamic-tls")]
++#[cfg(all(feature = "dynamic-tls", not(target_os = "jvm")))]
+ /// Build a `rustls::ClientConfig` manually for the dynamic certificate resolver path.
+ ///
+ /// This replicates the logic that tonic normally handles internally but uses
+@@ -811,13 +830,13 @@ fn build_custom_rustls_config(
+     Ok(config)
+ }
+ 
+-#[cfg(feature = "dynamic-tls")]
++#[cfg(all(feature = "dynamic-tls", not(target_os = "jvm")))]
+ /// Default TCP connect timeout for the dynamic TLS connector.
+ /// Matches a reasonable timeout for production use; the built-in tonic connector
+ /// uses `Endpoint::connect_timeout()` which we cannot access from a custom connector.
+ const DYNAMIC_TLS_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+ 
+-#[cfg(feature = "dynamic-tls")]
++#[cfg(all(feature = "dynamic-tls", not(target_os = "jvm")))]
+ /// A custom connector that wraps a TCP connector with TLS using a custom
+ /// `rustls::ClientConfig` (needed for dynamic cert resolution).
+ #[derive(Clone)]
+@@ -826,7 +845,7 @@ struct DynamicTlsConnector {
+     domain: Arc<tokio_rustls::rustls::pki_types::ServerName<'static>>,
+ }
+ 
+-#[cfg(feature = "dynamic-tls")]
++#[cfg(all(feature = "dynamic-tls", not(target_os = "jvm")))]
+ impl std::fmt::Debug for DynamicTlsConnector {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         f.debug_struct("DynamicTlsConnector")
+@@ -835,7 +854,7 @@ impl std::fmt::Debug for DynamicTlsConnector {
+     }
+ }
+ 
+-#[cfg(feature = "dynamic-tls")]
++#[cfg(all(feature = "dynamic-tls", not(target_os = "jvm")))]
+ impl tower::Service<Uri> for DynamicTlsConnector {
+     type Response = hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>;
+     type Error = Box<dyn std::error::Error + Send + Sync>;
+diff --git a/crates/client/src/metrics.rs b/crates/client/src/metrics.rs
+index 92e3ba77..72bbcac9 100644
+--- a/crates/client/src/metrics.rs
++++ b/crates/client/src/metrics.rs
+@@ -1,8 +1,7 @@
+ use crate::{AttachMetricLabels, CallType, callback_based, dbg_panic};
+-use futures_util::{
+-    FutureExt, TryFutureExt,
+-    future::{BoxFuture, Either},
+-};
++#[cfg(not(target_os = "jvm"))]
++use futures_util::future::Either;
++use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
+ use std::{
+     fmt,
+     task::{Context, Poll},
+@@ -15,7 +14,9 @@ use temporalio_common::telemetry::{
+         MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
+     },
+ };
+-use tonic::{Code, body::Body, transport::Channel};
++#[cfg(not(target_os = "jvm"))]
++use tonic::transport::Channel;
++use tonic::{Code, body::Body};
+ use tower::Service;
+ 
+ /// The string name (which may be prefixed) for this metric
+@@ -227,6 +228,7 @@ pub(crate) struct GrpcMetricSvc {
+ 
+ #[derive(Clone)]
+ pub(crate) enum ChannelOrGrpcOverride {
++    #[cfg(not(target_os = "jvm"))]
+     Channel(Channel),
+     GrpcOverride(callback_based::CallbackBasedGrpcService),
+ }
+@@ -234,6 +236,7 @@ pub(crate) enum ChannelOrGrpcOverride {
+ impl fmt::Debug for ChannelOrGrpcOverride {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         match self {
++            #[cfg(not(target_os = "jvm"))]
+             ChannelOrGrpcOverride::Channel(inner) => fmt::Debug::fmt(inner, f),
+             ChannelOrGrpcOverride::GrpcOverride(_) => f.write_str("<callback-based-grpc-service>"),
+         }
+@@ -248,6 +251,7 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
+ 
+     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+         match &mut self.inner {
++            #[cfg(not(target_os = "jvm"))]
+             ChannelOrGrpcOverride::Channel(inner) => inner.poll_ready(cx).map_err(Into::into),
+             ChannelOrGrpcOverride::GrpcOverride(inner) => inner.poll_ready(cx).map_err(Into::into),
+         }
+@@ -295,11 +299,16 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
+                 })
+             });
+         let callfut = match &mut self.inner {
++            #[cfg(not(target_os = "jvm"))]
+             ChannelOrGrpcOverride::Channel(inner) => {
+                 Either::Left(inner.call(req).map_err(Into::into))
+             }
+             ChannelOrGrpcOverride::GrpcOverride(inner) => {
+-                Either::Right(inner.call(req).map_err(Into::into))
++                #[cfg(not(target_os = "jvm"))]
++                let future = Either::Right(inner.call(req).map_err(Into::into));
++                #[cfg(target_os = "jvm")]
++                let future = inner.call(req).map_err(Into::into);
++                future
+             }
+         };
+         let errcode_label_disabled = self.disable_errcode_label;
+diff --git a/crates/client/src/options_structs.rs b/crates/client/src/options_structs.rs
+index f4d81976..201b244e 100644
+--- a/crates/client/src/options_structs.rs
++++ b/crates/client/src/options_structs.rs
+@@ -1,6 +1,4 @@
+-use crate::{
+-    ClientInterceptor, HttpConnectProxyOptions, RetryOptions, RpcOptions, VERSION, callback_based,
+-};
++use crate::{ClientInterceptor, RetryOptions, RpcOptions, VERSION, callback_based};
+ #[cfg(feature = "experimental")]
+ use crate::{ClientPlugin, ErasedClientPlugin};
+ use http::Uri;
+@@ -41,6 +39,19 @@ use url::Url;
+ pub(crate) const DEFAULT_PAYLOADS_WARN_SIZE: u64 = 512 * 1024;
+ pub(crate) const DEFAULT_MEMO_WARN_SIZE: u64 = 2 * 1024;
+ 
++/// Options for HTTP CONNECT proxy.
++#[derive(Clone, Debug, bon::Builder)]
++#[builder(start_fn = new, on(String, into))]
++#[non_exhaustive]
++pub struct HttpConnectProxyOptions {
++    /// The host:port to proxy through for TCP, or unix:/path/to/unix.sock for
++    /// Unix socket (which means it must start with "unix:/").
++    #[builder(start_fn)]
++    pub target_addr: String,
++    /// Optional HTTP basic auth for the proxy as user/pass tuple.
++    pub basic_auth: Option<(String, String)>,
++}
++
+ /// Options for [crate::Connection::connect].
+ #[derive(bon::Builder, Clone, Debug)]
+ #[non_exhaustive]
+diff --git a/crates/client/src/proxy.rs b/crates/client/src/proxy.rs
+index 09ae6ae1..f96d1e57 100644
+--- a/crates/client/src/proxy.rs
++++ b/crates/client/src/proxy.rs
+@@ -1,3 +1,4 @@
++use crate::HttpConnectProxyOptions;
+ use base64::prelude::*;
+ use http_body_util::Empty;
+ use hyper::{body::Bytes, header};
+@@ -24,19 +25,6 @@ use tower::{Service, service_fn};
+ #[cfg(unix)]
+ use tokio::net::UnixStream;
+ 
+-/// Options for HTTP CONNECT proxy.
+-#[derive(Clone, Debug, bon::Builder)]
+-#[builder(start_fn = new, on(String, into))]
+-#[non_exhaustive]
+-pub struct HttpConnectProxyOptions {
+-    /// The host:port to proxy through for TCP, or unix:/path/to/unix.sock for
+-    /// Unix socket (which means it must start with "unix:/").
+-    #[builder(start_fn)]
+-    pub target_addr: String,
+-    /// Optional HTTP basic auth for the proxy as user/pass tuple.
+-    pub basic_auth: Option<(String, String)>,
+-}
+-
+ impl HttpConnectProxyOptions {
+     /// Create a channel from the given endpoint that uses the HTTP CONNECT proxy.
+     pub async fn connect_endpoint(
+diff --git a/crates/client/src/retry.rs b/crates/client/src/retry.rs
+index 9ac2cdd8..5b9ff27e 100644
+--- a/crates/client/src/retry.rs
++++ b/crates/client/src/retry.rs
+@@ -6,7 +6,6 @@ use crate::{
+ use backon::{BackoffBuilder, ExponentialBuilder};
+ use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
+ use std::{
+-    error::Error,
+     fmt::Debug,
+     future::Future,
+     time::{Duration, Instant},
+@@ -316,8 +315,11 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
+         // connection closed during an AZ outage), it should be retried like Unavailable.
+         // We distinguish this from true application/caller-initiated cancellations by
+         // inspecting the error source chain for tonic::transport::Error → hyper::Error.
++        #[cfg(not(target_os = "jvm"))]
+         let transport_cancel_retry_allowed =
+             e.code() == Code::Cancelled && is_transport_cancelled(&e);
++        #[cfg(target_os = "jvm")]
++        let transport_cancel_retry_allowed = false;
+ 
+         if RETRYABLE_ERROR_CODES.contains(&e.code())
+             || long_poll_allowed
+@@ -359,11 +361,11 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
+ /// transport-level failure (tonic::transport::Error → hyper::Error) rather than
+ /// an application/caller-initiated cancellation. These should be retried like
+ /// `Code::Unavailable`.
++#[cfg(not(target_os = "jvm"))]
+ fn is_transport_cancelled(status: &tonic::Status) -> bool {
+-    status
+-        .source()
++    std::error::Error::source(status)
+         .and_then(|e| e.downcast_ref::<tonic::transport::Error>())
+-        .and_then(|te| te.source())
++        .and_then(std::error::Error::source)
+         .and_then(|tec| tec.downcast_ref::<hyper::Error>())
+         .is_some()
+ }
+diff --git a/crates/common/Cargo.toml b/crates/common/Cargo.toml
+index 11333622..06cda1b0 100644
+--- a/crates/common/Cargo.toml
++++ b/crates/common/Cargo.toml
+@@ -89,10 +89,7 @@ tokio = { version = "1.47", default-features = false, features = [
+   "rt",
+ ], optional = true }
+ toml = { version = "1.0", optional = true }
+-tonic = { workspace = true, default-features = false, features = [
+-  "transport",
+-  "codegen",
+-] }
++tonic = { workspace = true, default-features = false, features = ["codegen"] }
+ prost = { workspace = true }
+ tracing = "0.1"
+ # TODO [rust-sdk-branch]: Is it reasonable to make this optional?
+@@ -110,12 +107,16 @@ url = "2.5"
+ path = "../protos"
+ version = "~0.11.0"
+ # External storage reads and writes proto JSON, whose impls live behind serde_serialize.
+-features = ["grpc-clients", "serde_serialize"]
++features = ["grpc-stubs", "serde_serialize"]
+ 
+ [dependencies.temporalio-common-wasm]
+ path = "../common-wasm"
+ version = "~1.2.0"
+ 
++[target.'cfg(not(target_os = "jvm"))'.dependencies]
++temporalio-protos = { path = "../protos", version = "~0.11.0", features = ["grpc-clients"] }
++tonic = { workspace = true, default-features = false, features = ["transport"] }
++
+ [build-dependencies]
+ prost = { workspace = true }
+ prost-types = "0.14"
+diff --git a/crates/protos/Cargo.toml b/crates/protos/Cargo.toml
+index 349f611c..95e95419 100644
+--- a/crates/protos/Cargo.toml
++++ b/crates/protos/Cargo.toml
+@@ -16,7 +16,8 @@ links = "temporalio_protos"
+ [features]
+ default = []
+ serde_serialize = []
+-grpc-clients = ["tonic/channel"]
++grpc-stubs = []
++grpc-clients = ["grpc-stubs", "tonic/channel"]
+ vendored-protox = ["dep:protox", "prost-types/vendored-protox"]
+ 
+ [dependencies]
+diff --git a/crates/protos/build.rs b/crates/protos/build.rs
+index ddcdebf3..8f20cc54 100644
+--- a/crates/protos/build.rs
++++ b/crates/protos/build.rs
+@@ -78,7 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+         // Workflow guests need message structs, while the native common crate enables this
+         // feature to preserve the generated clients it re-exports today.
+         .build_server(false)
+-        .build_client(env::var_os("CARGO_FEATURE_GRPC_CLIENTS").is_some())
++        .build_client(env::var_os("CARGO_FEATURE_GRPC_STUBS").is_some())
++        .build_transport(env::var_os("CARGO_FEATURE_GRPC_CLIENTS").is_some())
+         // Make conversions easier for some types
+         .type_attribute(
+             "temporal.api.history.v1.HistoryEvent.attributes",
+diff --git a/crates/sdk-core/CHANGELOG.md b/crates/sdk-core/CHANGELOG.md
+index 1792d238..60f57ab2 100644
+--- a/crates/sdk-core/CHANGELOG.md
++++ b/crates/sdk-core/CHANGELOG.md
+@@ -37,6 +37,7 @@ relevant information.
+ ## Unreleased
+ 
+ ### Added
++* [lang-internal] Core can be compiled for the JVM with the experimental Rust JVM backend and a host-supplied gRPC transport.
+ * Low-level Operator Service calls support namespace soft deletion, restoration, and restore
+   progress queries.
+ * Cloud API bindings support v0.27.0, including user group memberships, projects,
+diff --git a/crates/sdk-core/Cargo.toml b/crates/sdk-core/Cargo.toml
+index d1f2a155..45fe3f12 100644
+--- a/crates/sdk-core/Cargo.toml
++++ b/crates/sdk-core/Cargo.toml
+@@ -64,7 +64,6 @@ enum-iterator = "2"
+ flate2 = { version = "1.1", optional = true }
+ futures = { version = "0.3", default-features = false }
+ futures-util = { version = "0.3", default-features = false }
+-gethostname = "1.0.2"
+ hyper = { version = "1.7", optional = true }
+ itertools = "0.14"
+ lru = "0.19"
+@@ -106,16 +105,11 @@ tokio = { version = "1.47", default-features = false, features = [
+   "parking_lot",
+   "time",
+   "fs",
+-  "process",
+   "macros",
+ ] }
+ tokio-util = { version = "0.7", features = ["io", "io-util"] }
+ tokio-stream = { version = "0.1", default-features = false }
+-tonic = { workspace = true, default-features = false, features = [
+-  "tls-native-roots",
+-  "transport",
+-  "codegen",
+-] }
++tonic = { workspace = true, default-features = false, features = ["codegen"] }
+ tracing = "0.1"
+ url = "2.5"
+ uuid = { version = "1.18", default-features = false, features = ["v4"] }
+@@ -143,6 +137,14 @@ features = ["core-based-sdk"]
+ path = "../macros"
+ version = "~1.2.0"
+ 
++[target.'cfg(not(target_os = "jvm"))'.dependencies]
++gethostname = "1.0.2"
++tokio = { version = "1.47", default-features = false, features = ["process"] }
++tonic = { workspace = true, default-features = false, features = ["tls-native-roots", "transport"] }
++
++[target.'cfg(target_os = "jvm")'.dependencies]
++getrandom = "0.4"
++
+ [dev-dependencies]
+ assert_matches = "1.5"
+ bimap = "0.6.3"
+diff --git a/crates/sdk-core/README.md b/crates/sdk-core/README.md
+index 18528a6f..29b9ce3f 100644
+--- a/crates/sdk-core/README.md
++++ b/crates/sdk-core/README.md
+@@ -9,3 +9,19 @@ The shared worker runtime used to build Temporal language SDKs.
+ 
+ Its APIs are intended for SDK implementers and may change without notice. Rust application authors
+ should use [`temporalio-sdk`](https://crates.io/crates/temporalio-sdk) instead.
++
++## Experimental JVM build
++
++With [`rustc_codegen_jvm`](https://github.com/IntegralPilot/rustc_codegen_jvm) installed and
++`cargo-jvm` configured to use its [`experimental2` revision
++`99ff1bd`](https://github.com/IntegralPilot/rustc_codegen_jvm/commit/99ff1bd), run:
++
++```sh
++cargo jvm build --locked -p temporalio-sdk-core --lib --no-default-features \
++  --config 'build.rustflags = ["--cfg", "getrandom_backend=\"custom\""]'
++```
++
++The JVM build uses the compiler runtime's Java `SecureRandom` implementation for system entropy.
++A JVM host must supply an RPC transport through the client service override. The command builds the
++Core library for use by a JVM bridge. Running a worker also requires that bridge to provide
++the transport and drive workflow activations.
+diff --git a/crates/sdk-core/src/environment.rs b/crates/sdk-core/src/environment.rs
+index 97c55bbb..01e35e3d 100644
+--- a/crates/sdk-core/src/environment.rs
++++ b/crates/sdk-core/src/environment.rs
+@@ -17,14 +17,34 @@ use temporalio_common::protos::temporal::api::worker::v1::environment_info::{
+ use temporalio_common::protos::temporal::api::worker::v1::{
+     EnvironmentInfo,
+     environment_info::{
+-        Architecture, HostingEnvironment, Platform, Runtime,
+-        hosting_environment::HostingEnvironmentType, platform::Variant, runtime::RuntimeType,
++        HostingEnvironment, Platform, Runtime, hosting_environment::HostingEnvironmentType,
++        runtime::RuntimeType,
+     },
+ };
+ 
++#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++use temporalio_common::protos::temporal::api::worker::v1::environment_info::{
++    Architecture, platform::Variant,
++};
++
++pub(crate) fn hostname() -> String {
++    #[cfg(not(target_os = "jvm"))]
++    {
++        gethostname::gethostname().to_string_lossy().into_owned()
++    }
++    #[cfg(target_os = "jvm")]
++    {
++        env::var("HOSTNAME").unwrap_or_default()
++    }
++}
++
+ pub(crate) fn native_runtime() -> Runtime {
++    #[cfg(not(target_os = "jvm"))]
++    let runtime_type = RuntimeType::Native;
++    #[cfg(target_os = "jvm")]
++    let runtime_type = RuntimeType::Jvm;
+     Runtime {
+-        r#type: RuntimeType::Native as i32,
++        r#type: runtime_type as i32,
+         version: String::new(),
+     }
+ }
+@@ -147,9 +167,11 @@ fn is_docker() -> bool {
+ }
+ 
+ fn detect_platform() -> Option<Platform> {
++    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+     let version = sysinfo::System::os_version()
+         .or_else(sysinfo::System::kernel_version)
+         .unwrap_or_default();
++    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+     let architecture = architecture() as i32;
+ 
+     #[cfg(target_os = "linux")]
+@@ -182,6 +204,7 @@ fn detect_platform() -> Option<Platform> {
+     None
+ }
+ 
++#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+ fn architecture() -> Architecture {
+     #[cfg(target_arch = "x86_64")]
+     return Architecture::Amd64;
+diff --git a/crates/sdk-core/src/jvm.rs b/crates/sdk-core/src/jvm.rs
+new file mode 100644
+index 00000000..b4381903
+--- /dev/null
++++ b/crates/sdk-core/src/jvm.rs
+@@ -0,0 +1,15 @@
++unsafe extern "C" {
++    #[link_name = "jvm:static:org/rustlang/runtime/RuntimeSupport:fillRandom"]
++    fn fill_random(destination: *mut u8, length: usize);
++}
++
++// The compiler's JVM target supplies SecureRandom for std. getrandom needs the same
++// implementation registered separately because it chooses its own platform backend.
++#[unsafe(no_mangle)]
++unsafe extern "Rust" fn __getrandom_v03_custom(
++    destination: *mut u8,
++    length: usize,
++) -> Result<(), getrandom::Error> {
++    unsafe { fill_random(destination, length) };
++    Ok(())
++}
+diff --git a/crates/sdk-core/src/lib.rs b/crates/sdk-core/src/lib.rs
+index 08523dd2..6d0747cc 100644
+--- a/crates/sdk-core/src/lib.rs
++++ b/crates/sdk-core/src/lib.rs
+@@ -20,6 +20,8 @@ mod environment;
+ #[cfg(feature = "ephemeral-server")]
+ pub mod ephemeral_server;
+ mod internal_flags;
++#[cfg(target_os = "jvm")]
++mod jvm;
+ mod pollers;
+ mod protosext;
+ pub mod replay;
+diff --git a/crates/sdk-core/src/worker/heartbeat.rs b/crates/sdk-core/src/worker/heartbeat.rs
+index 95084b7c..3ebc3fb4 100644
+--- a/crates/sdk-core/src/worker/heartbeat.rs
++++ b/crates/sdk-core/src/worker/heartbeat.rs
+@@ -485,10 +485,7 @@ mod tests {
+                 let host_info = heartbeat.host_info.clone().unwrap();
+                 assert_eq!("test-identity", heartbeat.worker_identity);
+                 assert!(!heartbeat.worker_instance_key.is_empty());
+-                assert_eq!(
+-                    host_info.host_name,
+-                    gethostname::gethostname().to_string_lossy().to_string()
+-                );
++                assert_eq!(host_info.host_name, crate::environment::hostname());
+                 assert_eq!(host_info.process_id, std::process::id().to_string());
+                 assert_eq!(heartbeat.sdk_name, "test-core");
+                 assert_eq!(heartbeat.sdk_version, "0.0.0");
+diff --git a/crates/sdk-core/src/worker/mod.rs b/crates/sdk-core/src/worker/mod.rs
+index 62e53e2a..64bb6805 100644
+--- a/crates/sdk-core/src/worker/mod.rs
++++ b/crates/sdk-core/src/worker/mod.rs
+@@ -66,7 +66,6 @@ use crate::{
+ use activities::WorkerActivityTasks;
+ use anyhow::bail;
+ use futures_util::{StreamExt, stream};
+-use gethostname::gethostname;
+ use parking_lot::{Mutex, RwLock};
+ use slot_provider::SlotProvider;
+ use std::{
+@@ -2338,7 +2337,7 @@ impl WorkerHeartbeatManager {
+             let mut worker_heartbeat = WorkerHeartbeat {
+                 worker_instance_key: worker_instance_key.to_string(),
+                 host_info: Some(WorkerHostInfo {
+-                    host_name: gethostname().to_string_lossy().to_string(),
++                    host_name: crate::environment::hostname(),
+                     process_id: std::process::id().to_string(),
+                     current_host_cpu_usage: heartbeat_manager_metrics.sys_info.used_cpu_percent()
+                         as f32,

@@ -1,0 +1,93 @@
+--- a/crates/client/src/callback_based.rs
++++ b/crates/client/src/callback_based.rs
+@@ -8,9 +8,10 @@
+ use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
+ use hyper::body::{Bytes, Frame};
+ use std::{
+-    sync::Arc,
+     task::{Context, Poll},
+ };
++#[cfg(not(target_os = "jvm"))]
++use std::sync::Arc;
+ use tonic::{Status, metadata::GRPC_CONTENT_TYPE};
+ use tower::Service;
+ 
+@@ -42,11 +43,18 @@
+ pub struct CallbackBasedGrpcService {
+     /// Callback to invoke on each RPC call.
+     #[allow(clippy::type_complexity)] // Signature is not that complex
++    #[cfg(not(target_os = "jvm"))]
+     pub callback: Arc<
+         dyn Fn(GrpcRequest) -> BoxFuture<'static, Result<GrpcSuccessResponse, Status>>
+             + Send
+             + Sync,
+     >,
++    /// Connection identifier supplied by the JVM host.
++    #[cfg(target_os = "jvm")]
++    pub context: i64,
++    /// Callback using a context ID so no managed Java object is retained by Rust futures.
++    #[cfg(target_os = "jvm")]
++    pub callback: fn(i64, GrpcRequest) -> BoxFuture<'static, Result<GrpcSuccessResponse, Status>>,
+ }
+ impl std::fmt::Debug for CallbackBasedGrpcService {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+@@ -64,7 +72,10 @@
+     }
+ 
+     fn call(&mut self, req: Request<tonic::body::Body>) -> Self::Future {
++        #[cfg(not(target_os = "jvm"))]
+         let callback = self.callback.clone();
++        #[cfg(target_os = "jvm")]
++        let (callback, context) = (self.callback, self.context);
+ 
+         Box::pin(async move {
+             // Build req
+@@ -95,7 +106,11 @@
+             };
+ 
+             // Invoke and handle response
+-            match (callback)(req).await {
++            #[cfg(not(target_os = "jvm"))]
++            let result = callback(req).await;
++            #[cfg(target_os = "jvm")]
++            let result = callback(context, req).await;
++            match result {
+                 Ok(success) => {
+                     // Create body bytes which requires a flag saying whether compressed, then
+                     // message len, then actual message. So we create a Bytes for those 5 prepend
+@@ -125,7 +140,15 @@
+                         .body(tonic::body::Body::new(full_body))
+                         .map_err(|e| anyhow!(e))?)
+                 }
++                #[cfg(not(target_os = "jvm"))]
+                 Err(status) => Ok(status.into_http()),
++                #[cfg(target_os = "jvm")]
++                Err(status) => {
++                    let mut response = Response::new(tonic::body::Body::default());
++                    response.headers_mut().insert(http::header::CONTENT_TYPE, GRPC_CONTENT_TYPE);
++                    status.add_header(response.headers_mut())?;
++                    Ok(response)
++                }
+             }
+         })
+     }
+diff --git a/crates/sdk-core/Cargo.toml b/crates/sdk-core/Cargo.toml
+--- a/crates/sdk-core/Cargo.toml
++++ b/crates/sdk-core/Cargo.toml
+@@ -102,7 +102,6 @@
+ tokio = { version = "1.47", default-features = false, features = [
+   "rt",
+   "rt-multi-thread",
+-  "parking_lot",
+   "time",
+   "fs",
+   "macros",
+@@ -139,7 +138,7 @@
+ 
+ [target.'cfg(not(target_os = "jvm"))'.dependencies]
+ gethostname = "1.0.2"
+-tokio = { version = "1.47", default-features = false, features = ["process"] }
++tokio = { version = "1.47", default-features = false, features = ["parking_lot", "process"] }
+ tonic = { workspace = true, default-features = false, features = ["tls-native-roots", "transport"] }
+ 
+ [target.'cfg(target_os = "jvm")'.dependencies]

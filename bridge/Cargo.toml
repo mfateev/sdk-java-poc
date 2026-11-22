@@ -1,0 +1,24 @@
+[package]
+name = "temporal_java_bridge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+http = "1"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
+prost = "0.14"
+temporalio-sdk-core = { path = "../.deps/sdk-rust/crates/sdk-core", default-features = false }
+temporalio-client = { path = "../.deps/sdk-rust/crates/client", default-features = false }
+temporalio-common = { path = "../.deps/sdk-rust/crates/common", default-features = false }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
+tonic = { version = "=0.14.9", default-features = false }
+
+[patch.crates-io]
+tonic = { path = "../.deps/tonic" }
+http = { path = "../.deps/http" }

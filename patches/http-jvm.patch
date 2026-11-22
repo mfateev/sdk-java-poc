@@ -1,0 +1,100 @@
+--- a/src/extensions.rs
++++ b/src/extensions.rs
+@@ -59,6 +59,7 @@
+     /// assert!(ext.insert(4u8).is_none());
+     /// assert_eq!(ext.insert(9i32), Some(5i32));
+     /// ```
++    #[cfg(not(target_os = "jvm"))]
+     pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
+         self.map
+             .get_or_insert_with(Box::default)
+@@ -66,6 +67,22 @@
+             .and_then(|boxed| boxed.into_any().downcast().ok().map(|boxed| *boxed))
+     }
+ 
++    /// Insert an extension using a borrowed clone of the previous value on the JVM.
++    #[cfg(target_os = "jvm")]
++    pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
++        let previous = self.get::<T>().cloned();
++        let entry = self.map.get_or_insert_with(Box::default).entry(TypeId::of::<T>());
++        match entry {
++            std::collections::hash_map::Entry::Vacant(entry) => {
++                entry.insert(Box::new(val));
++            }
++            std::collections::hash_map::Entry::Occupied(mut entry) => {
++                *entry.get_mut() = Box::new(val);
++            }
++        }
++        previous
++    }
++
+     /// Get a reference to a type previously inserted on this `Extensions`.
+     ///
+     /// # Example
+@@ -79,10 +96,8 @@
+     /// assert_eq!(ext.get::<i32>(), Some(&5i32));
+     /// ```
+     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+-        self.map
+-            .as_ref()
+-            .and_then(|map| map.get(&TypeId::of::<T>()))
+-            .and_then(|boxed| (**boxed).as_any().downcast_ref())
++        let boxed = self.map.as_ref()?.get(&TypeId::of::<T>())?;
++        (**boxed).as_any().downcast_ref()
+     }
+ 
+     /// Get a mutable reference to a type previously inserted on this `Extensions`.
+@@ -98,10 +113,8 @@
+     /// assert_eq!(ext.get::<String>().unwrap(), "Hello World");
+     /// ```
+     pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
+-        self.map
+-            .as_mut()
+-            .and_then(|map| map.get_mut(&TypeId::of::<T>()))
+-            .and_then(|boxed| (**boxed).as_any_mut().downcast_mut())
++        let boxed = self.map.as_mut()?.get_mut(&TypeId::of::<T>())?;
++        (**boxed).as_any_mut().downcast_mut()
+     }
+ 
+     /// Get a mutable reference to a type, inserting `value` if not already present on this
+@@ -173,13 +186,20 @@
+     /// assert_eq!(ext.remove::<i32>(), Some(5i32));
+     /// assert!(ext.get::<i32>().is_none());
+     /// ```
++    #[cfg(not(target_os = "jvm"))]
+     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
+-        self.map
+-            .as_mut()
+-            .and_then(|map| map.remove(&TypeId::of::<T>()))
+-            .and_then(|boxed| boxed.into_any().downcast().ok().map(|boxed| *boxed))
++        let boxed = self.map.as_mut()?.remove(&TypeId::of::<T>())?;
++        Some(*boxed.into_any().downcast().ok()?)
+     }
+ 
++    /// Remove an extension by cloning it before releasing the erased value on the JVM.
++    #[cfg(target_os = "jvm")]
++    pub fn remove<T: Clone + Send + Sync + 'static>(&mut self) -> Option<T> {
++        let previous = self.get::<T>()?.clone();
++        self.map.as_mut()?.remove(&TypeId::of::<T>());
++        Some(previous)
++    }
++
+     /// Clear the `Extensions` of all inserted extensions.
+     ///
+     /// # Example
+@@ -289,6 +309,7 @@
+     fn clone_box(&self) -> Box<dyn AnyClone + Send + Sync>;
+     fn as_any(&self) -> &dyn Any;
+     fn as_any_mut(&mut self) -> &mut dyn Any;
++    #[cfg(not(target_os = "jvm"))]
+     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+     fn type_name(&self) -> &'static str;
+ }
+@@ -306,6 +327,7 @@
+         self
+     }
+ 
++    #[cfg(not(target_os = "jvm"))]
+     fn into_any(self: Box<Self>) -> Box<dyn Any> {
+         self
+     }
