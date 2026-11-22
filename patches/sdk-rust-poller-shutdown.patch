@@ -1,0 +1,85 @@
+diff --git a/crates/sdk-core/src/worker/workflow/wft_poller.rs b/crates/sdk-core/src/worker/workflow/wft_poller.rs
+--- a/crates/sdk-core/src/worker/workflow/wft_poller.rs
++++ b/crates/sdk-core/src/worker/workflow/wft_poller.rs
+@@ -1,9 +1,11 @@
++#[cfg(not(target_os = "jvm"))]
++use crate::pollers::BoxedWFPoller;
+ use crate::{
+     MetricsContext, WorkerConfig,
+     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
+     pollers::{
+-        BoxedWFPoller, LongPollBuffer, Poller, PollerHeartbeatState, StickyPollerShared,
+-        StickyTaskPoller, WorkflowTaskOptions, sticky_poller_behavior,
++        LongPollBuffer, Poller, PollerHeartbeatState, StickyPollerShared, StickyTaskPoller,
++        WorkflowTaskOptions, sticky_poller_behavior,
+     },
+     protosext::ValidPollWFTQResponse,
+     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
+@@ -88,11 +90,15 @@
+         wf_task_poll_buffer,
+         sticky_queue_poller,
+     ));
++    // Keep the concrete poller on JVM. The backend emits a missing trait class when
++    // lowering shutdown_box on a dyn Poller.
++    #[cfg(not(target_os = "jvm"))]
++    let wf_task_poll_buffer: BoxedWFPoller = wf_task_poll_buffer;
+     new_wft_poller(wf_task_poll_buffer, metrics.clone())
+ }
+ 
+-fn new_wft_poller(
+-    poller: BoxedWFPoller,
++fn new_wft_poller<P>(
++    poller: Box<P>,
+     metrics: MetricsContext,
+ ) -> impl Stream<
+     Item = Result<
+@@ -102,7 +108,16 @@
+         ),
+         tonic::Status,
+     >,
+-> {
++>
++where
++    P: Poller<(
++            PollWorkflowTaskQueueResponse,
++            OwnedMeteredSemPermit<WorkflowSlotKind>,
++        )> + Send
++        + Sync
++        + ?Sized
++        + 'static,
++{
+     stream::unfold((poller, metrics), |(poller, metrics)| async move {
+         loop {
+             return match poller.poll().await {
+diff --git a/crates/sdk-core/src/pollers/mod.rs b/crates/sdk-core/src/pollers/mod.rs
+--- a/crates/sdk-core/src/pollers/mod.rs
++++ b/crates/sdk-core/src/pollers/mod.rs
+@@ -10,13 +10,13 @@
+ use crate::{
+     abstractions::{OwnedMeteredSemPermit, TrackedOwnedMeteredSemPermit},
+     telemetry::metrics::MetricsContext,
+-    worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind},
++    worker::{ActivitySlotKind, NexusSlotKind, SlotKind},
+ };
+ use anyhow::{anyhow, bail};
+ use futures_util::{Stream, stream};
+ use std::{fmt::Debug, marker::PhantomData};
+ use temporalio_common::protos::temporal::api::workflowservice::v1::{
+-    PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
++    PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+ };
+ use tokio::select;
+ use tokio_util::sync::CancellationToken;
+@@ -43,9 +43,10 @@
+     async fn shutdown_box(self: Box<Self>);
+ }
+ pub(crate) type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
++#[cfg(not(target_os = "jvm"))]
+ pub(crate) type BoxedWFPoller = BoxedPoller<(
+-    PollWorkflowTaskQueueResponse,
+-    OwnedMeteredSemPermit<WorkflowSlotKind>,
++    temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
++    OwnedMeteredSemPermit<crate::worker::WorkflowSlotKind>,
+ )>;
+ pub(crate) type BoxedActPoller = BoxedPoller<(
+     PollActivityTaskQueueResponse,

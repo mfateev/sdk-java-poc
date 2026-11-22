@@ -36,17 +36,22 @@ fetch_crate() {
   )
 }
 
-activation_patch="$root/patches/sdk-rust-activation-stream.patch"
+jvm_worker_patches=(
+  "$root/patches/sdk-rust-activation-stream.patch"
+  "$root/patches/sdk-rust-poller-shutdown.patch"
+)
 fetch_checkout https://github.com/temporalio/sdk-rust.git "$core_revision" "$deps/sdk-rust" \
-  "$root/patches/sdk-rust-jvm.patch" "$root/patches/sdk-rust-java-callback.patch" "$activation_patch"
+  "$root/patches/sdk-rust-jvm.patch" "$root/patches/sdk-rust-java-callback.patch" "${jvm_worker_patches[@]}"
 
-# Apply the activation-stream fix to SDK checkouts prepared by an earlier bootstrap.
+# Apply worker fixes to SDK checkouts prepared by an earlier bootstrap.
 (
   export GIT_CEILING_DIRECTORIES="$deps"
   cd "$deps/sdk-rust"
-  if ! git apply --reverse --check "$activation_patch" 2>/dev/null; then
-    git apply "$activation_patch"
-  fi
+  for worker_patch in "${jvm_worker_patches[@]}"; do
+    if ! git apply --reverse --check "$worker_patch" 2>/dev/null; then
+      git apply "$worker_patch"
+    fi
+  done
 )
 
 fetch_checkout https://github.com/IntegralPilot/rustc_codegen_jvm.git "$compiler_revision" "$deps/compiler"

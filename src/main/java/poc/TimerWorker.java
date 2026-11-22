@@ -41,6 +41,7 @@ public final class TimerWorker {
                 worker.close();
                 try {
                     worker.completion().get(10, TimeUnit.SECONDS);
+                    System.out.println("Core worker shut down cleanly");
                 } catch (Exception e) {
                     System.err.println("Worker shutdown: " + e);
                 }

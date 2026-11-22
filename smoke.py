@@ -98,6 +98,10 @@ def main():
                 expected.append("Java received FireTimer")
             if not all(line in logs for line in expected):
                 raise RuntimeError("Missing Java workflow activations\n" + logs)
+            stop(worker)
+            logs = read(BUILD / "worker.log")
+            if "Core worker shut down cleanly" not in logs:
+                raise RuntimeError("Core worker shutdown did not complete cleanly\n" + logs)
             print(output)
             print(logs)
         finally:

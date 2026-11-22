@@ -87,10 +87,10 @@ messages. Java code supplies workflow execution logic. SDK Core supplies workflo
 
 The bridge handles workflow tasks. The example uses a plaintext local gRPC channel and a minimal
 Java workflow handler. Legacy Java histories, activities, Nexus, and connection lifecycle behavior
-at scale remain unverified. The smoke test verifies workflow completion. Worker shutdown still
-fails in some runs.
+at scale remain unverified. The workflow smoke tests verify workflow completion and clean
+worker shutdown.
 
-## JVM activation-stream workaround
+## JVM worker workarounds
 
 The JVM build uses an `Arc` for Core's activation-stream mutex. With the pinned
 `rustc_codegen_jvm` revision, repeated async borrows of the inline mutex through the
@@ -101,3 +101,6 @@ zero permits. Core queued `FireTimer` while the consumer waited for the lock.
 - [ ] Report the `LazyLock` reference-identity bug to `rustc_codegen_jvm` with the
   [standalone Rust reproducer](probes/lazy-lock-jvm-repro.rs). The same two live borrows
   compare equal natively and unequal on the pinned JVM build, including under `-Xint`.
+
+The JVM build also retains the concrete workflow poller type during shutdown. This avoids
+the missing trait class the pinned compiler emits for the boxed poller shutdown call.
