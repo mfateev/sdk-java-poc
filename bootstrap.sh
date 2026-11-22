@@ -36,8 +36,19 @@ fetch_crate() {
   )
 }
 
+activation_patch="$root/patches/sdk-rust-activation-stream.patch"
 fetch_checkout https://github.com/temporalio/sdk-rust.git "$core_revision" "$deps/sdk-rust" \
-  "$root/patches/sdk-rust-jvm.patch" "$root/patches/sdk-rust-java-callback.patch"
+  "$root/patches/sdk-rust-jvm.patch" "$root/patches/sdk-rust-java-callback.patch" "$activation_patch"
+
+# Apply the activation-stream fix to SDK checkouts prepared by an earlier bootstrap.
+(
+  export GIT_CEILING_DIRECTORIES="$deps"
+  cd "$deps/sdk-rust"
+  if ! git apply --reverse --check "$activation_patch" 2>/dev/null; then
+    git apply "$activation_patch"
+  fi
+)
+
 fetch_checkout https://github.com/IntegralPilot/rustc_codegen_jvm.git "$compiler_revision" "$deps/compiler"
 fetch_crate tonic 0.14.9 e2cdfc673aabd30fe8fee92e65837b644c37c5d47f0f97ae6d5e0f1237d15e1b
 fetch_crate http 1.5.0 918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0

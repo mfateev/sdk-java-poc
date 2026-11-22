@@ -1,0 +1,53 @@
+diff --git a/crates/sdk-core/src/worker/workflow/mod.rs b/crates/sdk-core/src/worker/workflow/mod.rs
+--- a/crates/sdk-core/src/worker/workflow/mod.rs
++++ b/crates/sdk-core/src/worker/workflow/mod.rs
+@@ -121,17 +121,22 @@
+ type Result<T, E = WFMachinesError> = result::Result<T, E>;
+ type BoxedActivationStream = BoxStream<'static, Result<WorkflowStreamAction, PollError>>;
+ type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
++type ActivationStreamState = (
++    BoxedActivationStream,
++    // Used to indicate polling may begin
++    Option<oneshot::Sender<()>>,
++);
+ 
+ /// Centralizes all state related to workflows and workflow tasks
+ pub(crate) struct Workflows {
+     task_queue: String,
+     local_tx: UnboundedSender<LocalInput>,
+     processing_task: TakeCell<thread::JoinHandle<()>>,
+-    activation_stream: tokio::sync::Mutex<(
+-        BoxedActivationStream,
+-        // Used to indicate polling may begin
+-        Option<oneshot::Sender<()>>,
+-    )>,
++    #[cfg(not(target_os = "jvm"))]
++    activation_stream: tokio::sync::Mutex<ActivationStreamState>,
++    // Keep the mutex's identity stable across async borrows of the worker's LazyLock.
++    #[cfg(target_os = "jvm")]
++    activation_stream: Arc<tokio::sync::Mutex<ActivationStreamState>>,
+     client: Arc<dyn WorkerClient>,
+     /// Will be populated when this worker is using a cache and should complete WFTs with a sticky
+     /// queue.
+@@ -275,14 +280,17 @@
+                 });
+             })
+             .expect("Must be able to spawn workflow processing thread");
++        let activation_stream = tokio::sync::Mutex::new((
++            UnboundedReceiverStream::new(activation_rx).boxed(),
++            Some(start_polling_tx),
++        ));
++        #[cfg(target_os = "jvm")]
++        let activation_stream = Arc::new(activation_stream);
+         Self {
+             task_queue,
+             local_tx,
+             processing_task: TakeCell::new(processing_task),
+-            activation_stream: tokio::sync::Mutex::new((
+-                UnboundedReceiverStream::new(activation_rx).boxed(),
+-                Some(start_polling_tx),
+-            )),
++            activation_stream,
+             client,
+             sticky_attrs,
+             activity_tasks_handle,

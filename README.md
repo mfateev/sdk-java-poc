@@ -29,12 +29,16 @@ You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler checkout at the s
 ```sh
 python3 smoke.py --transport-only
 python3 smoke.py
+python3 smoke.py --timer
+python3 smoke.py --short-timer
 ```
 
 The first test checks that the Core client receives server capabilities over Java gRPC. The
 second starts a Core worker, hands its initial workflow activation to Java, and verifies that
-Temporal records workflow completion. The tests use a temporary local Temporal server. Logs are
-written to `build/server.log`, `build/worker.log`, and `build/workflow.log`.
+Temporal records workflow completion. The timer tests verify `InitializeWorkflow` and
+`FireTimer` in Java and workflow completion on the server. They use a two-second timer and a
+50 ms timer, respectively. The tests use a temporary local Temporal server. Logs are written to
+`build/server.log`, `build/worker.log`, and `build/workflow.log`.
 
 The example can also connect to an existing local server.
 
@@ -55,14 +59,17 @@ messages. Java code supplies workflow execution logic. SDK Core supplies workflo
 
 The bridge handles workflow tasks. The example uses a plaintext local gRPC channel and a minimal
 Java workflow handler. Legacy Java histories, activities, Nexus, and connection lifecycle behavior
-at scale remain unverified. The smoke test verifies workflow completion separately from worker
-shutdown, which can time out in the current build.
+at scale remain unverified. The smoke test verifies workflow completion. Worker shutdown still
+fails in some runs.
 
-## Timer probes
+## JVM activation-stream workaround
 
-`python3 smoke.py --timer` runs a two-second timer workflow. A successful run receives
-`InitializeWorkflow` and `FireTimer` in Java and records workflow completion on the server.
-This probe has also timed out. `python3 smoke.py --short-timer` runs the 50 ms case that first
-exposed the issue. In failing runs, Temporal records the timer firing and starts the next
-workflow task, which times out before Java receives `FireTimer`. On failure, the smoke runner
-also attempts to save a thread dump in `build/worker-threads.log`.
+The JVM build uses an `Arc` for Core's activation-stream mutex. With the pinned
+`rustc_codegen_jvm` revision, repeated async borrows of the inline mutex through the
+worker's `LazyLock` can resolve to different backing addresses. In stalled runs, the first
+guard returned its permit to one address and the next poll reached another address with
+zero permits. Core queued `FireTimer` while the consumer waited for the lock.
+
+- [ ] Report the `LazyLock` reference-identity bug to `rustc_codegen_jvm` with the
+  [standalone Rust reproducer](probes/lazy-lock-jvm-repro.rs). The same two live borrows
+  compare equal natively and unequal on the pinned JVM build, including under `-Xint`.
