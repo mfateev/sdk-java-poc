@@ -54,7 +54,7 @@ def main():
         reservation.bind((HOST, 0))
         port = reservation.getsockname()[1]
 
-    classpath = ":".join((str(BUILD / "classes"), str(BUILD / "bridge.jar"), read(BUILD / "classpath.txt").strip()))
+    classpath = read(BUILD / "classpath.txt").strip()
     server, worker, workflow = None, None, None
     with (BUILD / "server.log").open("w") as server_log, \
          (BUILD / "worker.log").open("w") as worker_log, \

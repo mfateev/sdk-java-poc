@@ -29,12 +29,12 @@ constructors, `String` arguments, and `String` or `void` results.
 
 ## Build
 
-Use JDK 21, Maven, Python 3.11+, Git, curl, Rustup, and `protoc`. The smoke test also needs the
+Use JDK 21, Python 3.11+, Git, curl, Rustup, and `protoc`. The smoke test also needs the
 Temporal CLI.
 
 ```sh
 ./bootstrap.sh
-./build.sh
+./gradlew publish
 ```
 
 Bootstrap checks out public SDK Rust revision `10fdaa23` and applies this repository's patches,
@@ -43,11 +43,10 @@ including the JVM build patch from `0fc90e3c`. It also pins the compiler to upst
 The HTTP and Tonic crate archives are checksum-verified before patching. The patches are applied
 to local copies under `.deps/`.
 
-The build creates `build/bridge.jar` and compiles the Java sources into `build/classes/`.
-It publishes `io.temporal:sdk-java-poc:0.1.0-SNAPSHOT` to the file repository at
-`build/maven-repository/`. The Maven artifact includes the Java API, its implementation,
-and the JVM-compiled Core. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
-checkout at the same revision.
+Gradle runs the pinned JVM Rust compiler, generates the protobuf descriptor set, and builds one
+JAR containing Java and SDK Core bytecode. It publishes `io.temporal:sdk-java-poc:0.1.0-SNAPSHOT` to the file repository at
+`build/maven-repository/`. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
+checkout at the same revision. `./build.sh` also runs `./gradlew publish`.
 
 The standalone `poc-timer` build on the `codex/sdk-java-poc` branch of `samples-java`
 resolves this Maven artifact and demonstrates the public API.
@@ -71,7 +70,7 @@ Temporal records workflow completion. The timer tests verify `InitializeWorkflow
 The example can also connect to an existing local server.
 
 ```sh
-java -Xss16m -cp "build/classes:build/bridge.jar:$(cat build/classpath.txt)" \
+java -Xss16m -cp "$(cat build/classpath.txt)" \
   poc.TimerWorker 127.0.0.1 7233 java-poc
 
 temporal workflow execute --type TimerWorkflow --task-queue java-poc --workflow-id java-poc-timer

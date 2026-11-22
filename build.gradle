@@ -1,0 +1,155 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'io.temporal'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+def compilerDirectory = providers.environmentVariable('CARGO_JVM_BACKEND_PATH')
+    .map { file(it) }
+    .orElse(layout.projectDirectory.dir('.deps/compiler').asFile)
+def cargoJvm = compilerDirectory.map { new File(it, 'cargo-jvm/target/release/cargo-jvm') }
+def cargoJvmConfig = providers.environmentVariable('CARGO_JVM_CONFIG')
+    .orElse(layout.projectDirectory.file('.deps/cargo-jvm.toml').asFile.absolutePath)
+def coreJar = layout.buildDirectory.file('bridge.jar')
+def coreRustFlags = 'build.rustflags = ["--cfg", "getrandom_backend=\\"custom\\""]'
+
+def buildJvmCompiler = tasks.register('buildJvmCompiler', Exec) {
+    description = 'Builds the pinned rustc_codegen_jvm checkout when needed.'
+    onlyIf { !cargoJvm.get().canExecute() }
+    doFirst {
+        workingDir compilerDirectory.get()
+        commandLine 'python3', 'build.py', 'all'
+    }
+}
+
+def packageJvmCore = tasks.register('packageJvmCore', Exec) {
+    description = 'Compiles SDK Core and the Rust bridge to JVM bytecode.'
+    dependsOn buildJvmCompiler
+
+    inputs.files(fileTree('bridge') { exclude 'target/**' })
+    ['sdk-rust', 'http', 'tonic'].each { dependency ->
+        inputs.files(fileTree(".deps/${dependency}") {
+            exclude '.git/**', 'target/**'
+        })
+    }
+    inputs.files(compilerDirectory.map { directory ->
+        fileTree(directory) {
+            include 'cargo-jvm/target/release/cargo-jvm', 'config.toml', 'jvm-unknown-jvm.json',
+                'java-linker/target/release/java-linker', 'runtime/build/libs/*.jar',
+                'target/release/*rustc_codegen_jvm*', 'std/**'
+        }
+    })
+    inputs.files(cargoJvmConfig.map { file(it) })
+    inputs.property('coreRustFlags', coreRustFlags)
+    outputs.file(coreJar)
+
+    doFirst {
+        File output = coreJar.get().asFile
+        output.parentFile.mkdirs()
+        environment 'CARGO_JVM_BACKEND_PATH', compilerDirectory.get().absolutePath
+        environment 'CARGO_JVM_CONFIG', cargoJvmConfig.get()
+        commandLine cargoJvm.get().absolutePath, 'package', '--locked',
+            '--manifest-path', 'bridge/Cargo.toml', '--lib', '--output', output.absolutePath,
+            '--config', coreRustFlags
+    }
+}
+
+dependencies {
+    api 'io.grpc:grpc-api:1.76.0'
+    implementation 'io.grpc:grpc-netty-shaded:1.76.0'
+    implementation 'io.grpc:grpc-stub:1.76.0'
+    implementation 'com.google.protobuf:protobuf-java:3.25.8'
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.18.2'
+    compileOnly files(packageJvmCore)
+}
+
+def protos = layout.projectDirectory.dir('.deps/sdk-rust/crates/protos/protos')
+def generatedResources = layout.buildDirectory.dir('generated/resources/poc')
+def descriptorSet = generatedResources.map { it.file('temporal/poc/schema.pb') }
+def generateTemporalSchema = tasks.register('generateTemporalSchema', Exec) {
+    description = 'Builds the protobuf descriptor set used by the Java bridge.'
+    inputs.files(fileTree(protos) {
+        include 'local/**/*.proto', 'api_upstream/**/*.proto', 'google/**/*.proto'
+    })
+    outputs.file(descriptorSet)
+    doFirst {
+        File output = descriptorSet.get().asFile
+        output.parentFile.mkdirs()
+        commandLine 'protoc',
+            '-I', protos.dir('local').asFile.absolutePath,
+            '-I', protos.dir('api_upstream').asFile.absolutePath,
+            '-I', protos.asFile.absolutePath,
+            '--include_imports', "--descriptor_set_out=${output.absolutePath}",
+            'temporal/sdk/core/workflow_activation/workflow_activation.proto',
+            'temporal/sdk/core/workflow_completion/workflow_completion.proto',
+            'temporal/api/workflowservice/v1/request_response.proto'
+    }
+}
+
+tasks.named('processResources') {
+    dependsOn generateTemporalSchema
+    from(generatedResources)
+    into('META-INF') {
+        from('LICENSE') { rename { 'LICENSE.sdk-java-poc' } }
+        from('LICENSE.sdk-java')
+    }
+}
+
+tasks.named('jar', Jar) {
+    dependsOn packageJvmCore
+    // The compiled Core has more entries than the standard ZIP limit.
+    zip64 = true
+    from({ zipTree(coreJar.get().asFile) }) {
+        exclude 'META-INF/MANIFEST.MF'
+    }
+}
+
+publishing {
+    publications {
+        poc(MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            name = 'poc'
+            url = layout.buildDirectory.dir('maven-repository')
+        }
+    }
+}
+
+def libraryJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
+def runtimeLibraries = configurations.runtimeClasspath
+def smokeClasspath = layout.buildDirectory.file('classpath.txt')
+def writeSmokeClasspath = tasks.register('writeSmokeClasspath') {
+    description = 'Writes the packaged SDK runtime classpath used by smoke.py.'
+    dependsOn tasks.named('jar')
+    inputs.file(libraryJar)
+    inputs.files(runtimeLibraries)
+    outputs.file(smokeClasspath)
+    doLast {
+        smokeClasspath.get().asFile.text = (
+            [libraryJar.get().asFile.absolutePath] + runtimeLibraries.files.collect { it.absolutePath }
+        ).join(File.pathSeparator) + '\n'
+    }
+}
+
+tasks.named('build') {
+    dependsOn writeSmokeClasspath
+}
+
+tasks.named('publish') {
+    dependsOn writeSmokeClasspath
+}

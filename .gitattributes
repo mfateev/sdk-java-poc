@@ -1,2 +1,4 @@
 # Unified diffs prefix empty context lines with a space.
 *.patch whitespace=-blank-at-eol
+
+gradlew.bat text eol=crlf

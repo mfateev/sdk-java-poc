@@ -2,3 +2,4 @@
 /build/
 /bridge/target/
 __pycache__/
+/.gradle/
