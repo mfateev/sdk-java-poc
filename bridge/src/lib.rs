@@ -190,20 +190,16 @@ async fn run(
             }
         };
         let run_id = activation.run_id.clone();
-        let completion = if activation.is_only_eviction() {
-            WorkflowActivationCompletion::empty(run_id)
-        } else {
-            match activate(context, &activation.encode_to_vec(), &run_id) {
-                Ok(completion) => completion,
-                Err(err) => WorkflowActivationCompletion::fail(
-                    run_id,
-                    Failure {
-                        message: format!("{err:#}"),
-                        ..Default::default()
-                    },
-                    None,
-                ),
-            }
+        let completion = match activate(context, &activation.encode_to_vec(), &run_id) {
+            Ok(completion) => completion,
+            Err(err) => WorkflowActivationCompletion::fail(
+                run_id,
+                Failure {
+                    message: format!("{err:#}"),
+                    ..Default::default()
+                },
+                None,
+            ),
         };
         if let Err(err) = worker.complete_workflow_activation(completion).await {
             failure = Some(anyhow!(err).context("completing SDK Core activation"));

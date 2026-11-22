@@ -22,9 +22,10 @@ API and its implementation.
   runs on Core and replays their Core-authored histories. The legacy Java SDK continues
   running workflows that started on its engine.
 
-The current timer example exercises the bridge. The next POC milestone is an application
-that registers and completes a workflow through the copied public API with
-`sdk-java-poc` as its only Temporal SDK dependency.
+The first milestone supports typed workflow registration, synchronous invocation, and durable
+timers through `Workflow.sleep`. The timer API slice supports the `default` namespace, a
+plaintext service connection, public workflow implementations with no-argument
+constructors, `String` arguments, and `String` or `void` results.
 
 ## Build
 
@@ -43,7 +44,13 @@ The HTTP and Tonic crate archives are checksum-verified before patching. The pat
 to local copies under `.deps/`.
 
 The build creates `build/bridge.jar` and compiles the Java sources into `build/classes/`.
-You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler checkout at the same revision.
+It publishes `io.temporal:sdk-java-poc:0.1.0-SNAPSHOT` to the file repository at
+`build/maven-repository/`. The Maven artifact includes the Java API, its implementation,
+and the JVM-compiled Core. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
+checkout at the same revision.
+
+The standalone `poc-timer` build on the `codex/sdk-java-poc` branch of `samples-java`
+resolves this Maven artifact and demonstrates the public API.
 
 ## Run
 
