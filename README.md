@@ -29,14 +29,12 @@ You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler checkout at the s
 ```sh
 python3 smoke.py --transport-only
 python3 smoke.py
-python3 smoke.py --timer
 ```
 
 The first test checks that the Core client receives server capabilities over Java gRPC. The
 second starts a Core worker, hands its initial workflow activation to Java, and verifies that
-Temporal records workflow completion. The third sends a two-second timer command from Java,
-unblocks on a later `FireTimer` activation, and confirms workflow completion. The tests use a
-temporary local Temporal server. Logs are written to `build/server.log`, `build/worker.log`, and `build/workflow.log`.
+Temporal records workflow completion. The tests use a temporary local Temporal server. Logs are
+written to `build/server.log`, `build/worker.log`, and `build/workflow.log`.
 
 The example can also connect to an existing local server.
 
@@ -60,9 +58,11 @@ Java workflow handler. Legacy Java histories, activities, Nexus, and connection 
 at scale remain unverified. The smoke test verifies workflow completion separately from worker
 shutdown, which can time out in the current build.
 
-## Timer reproduction
+## Timer probes
 
-`python3 smoke.py --short-timer` runs the 50 ms case that exposed a timing issue. In the failing
-runs, Temporal recorded the initial workflow task completion and the timer firing. The next
-workflow task started and timed out before Java received a `FireTimer` activation. On failure,
-the smoke runner also attempts to save a thread dump in `build/worker-threads.log`.
+`python3 smoke.py --timer` runs a two-second timer workflow. A successful run receives
+`InitializeWorkflow` and `FireTimer` in Java and records workflow completion on the server.
+This probe has also timed out. `python3 smoke.py --short-timer` runs the 50 ms case that first
+exposed the issue. In failing runs, Temporal records the timer firing and starts the next
+workflow task, which times out before Java receives `FireTimer`. On failure, the smoke runner
+also attempts to save a thread dump in `build/worker-threads.log`.
