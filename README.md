@@ -5,6 +5,27 @@ for workflow activations and accepts protobuf completions from Java. Java owns t
 issues unary RPCs, and signals completion back to Rust. The bridge uses JVM classes and the Java
 NIO transport.
 
+## Architecture decision
+
+Build `sdk-java-poc` as a standalone Java SDK backed by SDK Core. Applications declare
+`sdk-java-poc` as their sole Temporal SDK dependency. The POC provides both the public Java
+API and its implementation.
+
+- Copy the public API types from SDK Java, including the annotations, options, and other
+  types needed by their signatures. Use SDK Java revision `2ff9c2c1` as the starting API
+  reference and retain upstream license notices with copied source. Preserve package names
+  and signatures for the API surface implemented by the POC.
+- Write a new Java implementation over the Core activation and completion protocol.
+  Core owns workflow task polling, history replay, and the state machines. The POC owns
+  workflow execution and scheduling in Java, application callbacks, and Java gRPC transport.
+- Target source compatibility for the copied API on JDK 21. The POC starts fresh workflow
+  runs on Core and replays their Core-authored histories. The legacy Java SDK continues
+  running workflows that started on its engine.
+
+The current timer example exercises the bridge. The next POC milestone is an application
+that registers and completes a workflow through the copied public API with
+`sdk-java-poc` as its only Temporal SDK dependency.
+
 ## Build
 
 Use JDK 21, Maven, Python 3.11+, Git, curl, Rustup, and `protoc`. The smoke test also needs the
