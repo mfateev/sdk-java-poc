@@ -66,41 +66,130 @@ def packageJvmCore = tasks.register('packageJvmCore', Exec) {
     }
 }
 
+configurations {
+    protocCompiler
+    grpcCodeGenerator
+    protobufIncludes
+}
+
+def os = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def architecture = System.getProperty('os.arch')
+def arm64 = architecture in ['arm64', 'aarch64']
+def protoPlatform = os.contains('mac') ? 'osx' : os.contains('linux') ? 'linux' : 'windows'
+def classifier = "${protoPlatform}-${arm64 ? 'aarch_64' : 'x86_64'}"
+
 dependencies {
-    api 'io.grpc:grpc-api:1.76.0'
-    implementation 'io.grpc:grpc-netty-shaded:1.76.0'
-    implementation 'io.grpc:grpc-stub:1.76.0'
-    implementation 'com.google.protobuf:protobuf-java:3.25.8'
-    implementation 'com.fasterxml.jackson.core:jackson-core:2.18.2'
+    api platform('io.grpc:grpc-bom:1.76.0')
+    api 'io.grpc:grpc-api'
+    api 'io.grpc:grpc-stub'
+    implementation 'io.grpc:grpc-protobuf'
+    api 'io.grpc:grpc-netty-shaded'
+    api 'io.grpc:grpc-services'
+    api 'io.grpc:grpc-inprocess'
+    api 'com.google.protobuf:protobuf-java-util:3.25.8'
+    api 'com.uber.m3:tally-core:0.13.0'
+    api 'org.slf4j:slf4j-api:1.7.36'
+    api 'io.micrometer:micrometer-core:1.9.9'
+    api 'io.nexusrpc:nexus-sdk:0.4.0-alpha'
+    api 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    api 'com.google.code.gson:gson:2.10.1'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.2'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2'
+    implementation 'com.google.guava:guava:32.0.1-jre'
+    compileOnly 'com.jayway.jsonpath:json-path:2.9.0'
+    compileOnly 'javax.annotation:javax.annotation-api:1.3.2'
     compileOnly files(packageJvmCore)
+
+    protobufIncludes 'com.google.protobuf:protobuf-java:3.25.8'
+    protocCompiler "com.google.protobuf:protoc:3.25.8:${classifier}@exe"
+    grpcCodeGenerator "io.grpc:protoc-gen-grpc-java:1.76.0:${classifier}@exe"
+}
+
+def sdkJava = layout.projectDirectory.dir('.deps/sdk-java')
+def sdkSources = tasks.register('prepareSdkJavaSources', Sync) {
+    from(sdkJava.dir('temporal-sdk/src/main/java')) {
+        exclude 'io/temporal/internal/replay/ReplayWorkflowExecutor.java'
+        exclude 'io/temporal/internal/worker/SyncWorkflowWorker.java'
+        exclude 'io/temporal/internal/task/VirtualThreadDelegate.java'
+    }
+    from(sdkJava.dir('temporal-sdk/src/main/java21'))
+    from(sdkJava.dir('temporal-serviceclient/src/main/java'))
+    into layout.buildDirectory.dir('generated/sdk-java')
+    doFirst {
+        if (!sdkJava.file('temporal-sdk/src/main/java/io/temporal/workflow/Workflow.java').asFile.isFile()) {
+            throw new GradleException('Run ./bootstrap.sh to fetch the pinned SDK Java sources')
+        }
+    }
 }
 
 def protos = layout.projectDirectory.dir('.deps/sdk-rust/crates/protos/protos')
-def generatedResources = layout.buildDirectory.dir('generated/resources/poc')
-def descriptorSet = generatedResources.map { it.file('temporal/poc/schema.pb') }
-def generateTemporalSchema = tasks.register('generateTemporalSchema', Exec) {
-    description = 'Builds the protobuf descriptor set used by the Java bridge.'
-    inputs.files(fileTree(protos) {
-        include 'local/**/*.proto', 'api_upstream/**/*.proto', 'google/**/*.proto'
+def protoRoots = ['local', 'api_upstream', 'api_cloud_upstream', 'testsrv_upstream']
+    .collect { protos.dir(it).asFile }
+def protoSources = files(protoRoots.collect { root ->
+    fileTree(root) {
+        include 'temporal/**/*.proto', 'nexusannotations/**/*.proto'
+    }
+}, fileTree(protos.asFile) {
+    include 'protoc-gen-openapiv2/**/*.proto'
+})
+def generatedProtos = layout.buildDirectory.dir('generated/protos')
+def generateTemporalProtos = tasks.register('generateTemporalProtos') {
+    description = 'Generates typed Java messages and service stubs from the pinned Core schemas.'
+    inputs.files(protoSources, configurations.protocCompiler, configurations.grpcCodeGenerator,
+        configurations.protobufIncludes)
+    inputs.files(fileTree(protos.asFile) {
+        include 'api_upstream/google/**/*.proto', 'google/rpc/**/*.proto'
     })
-    outputs.file(descriptorSet)
-    doFirst {
-        File output = descriptorSet.get().asFile
+    outputs.dir(generatedProtos)
+    doLast {
+        File output = generatedProtos.get().asFile
+        delete(output)
+        output.mkdirs()
+        File compiler = configurations.protocCompiler.singleFile
+        File grpc = configurations.grpcCodeGenerator.singleFile
+        File executableDir = temporaryDir
+        copy {
+            from compiler, grpc
+            into executableDir
+            filePermissions { unix('rwxr-xr-x') }
+        }
+        File standardProtos = new File(temporaryDir, 'includes')
+        copy {
+            from zipTree(configurations.protobufIncludes.singleFile)
+            include 'google/protobuf/*.proto'
+            into standardProtos
+        }
+        def includePaths = (protoRoots + [protos.asFile, standardProtos]).collect { "-I${it.absolutePath}" }
+        def sources = protoSources.files.collect { it.absolutePath }.sort()
+        project.exec {
+            executable new File(executableDir, compiler.name).absolutePath
+            args includePaths
+            args "--java_out=${output.absolutePath}", "--grpc-java_out=${output.absolutePath}"
+            args "--plugin=protoc-gen-grpc-java=${new File(executableDir, grpc.name).absolutePath}"
+            args sources
+        }
+    }
+}
+sourceSets.main.java.srcDir(sdkSources)
+sourceSets.main.java.srcDir(generateTemporalProtos)
+tasks.named('compileJava', JavaCompile) {
+    options.fork = true
+    options.forkOptions.memoryMaximumSize = '2g'
+}
+
+def versionResource = layout.buildDirectory.file('generated/resources/io/temporal/version.properties')
+def writeSdkVersion = tasks.register('writeSdkVersion') {
+    inputs.property('version', project.version.toString())
+    outputs.file(versionResource)
+    doLast {
+        File output = versionResource.get().asFile
         output.parentFile.mkdirs()
-        commandLine 'protoc',
-            '-I', protos.dir('local').asFile.absolutePath,
-            '-I', protos.dir('api_upstream').asFile.absolutePath,
-            '-I', protos.asFile.absolutePath,
-            '--include_imports', "--descriptor_set_out=${output.absolutePath}",
-            'temporal/sdk/core/workflow_activation/workflow_activation.proto',
-            'temporal/sdk/core/workflow_completion/workflow_completion.proto',
-            'temporal/api/workflowservice/v1/request_response.proto'
+        output.text = "temporal-client-version=${project.version}\n"
     }
 }
 
 tasks.named('processResources') {
-    dependsOn generateTemporalSchema
-    from(generatedResources)
+    from(writeSdkVersion) { into 'io/temporal' }
     into('META-INF') {
         from('LICENSE') { rename { 'LICENSE.sdk-java-poc' } }
         from('LICENSE.sdk-java')

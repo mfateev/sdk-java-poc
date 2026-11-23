@@ -11,45 +11,44 @@ Build `sdk-java-poc` as a standalone Java SDK backed by SDK Core. Applications d
 `sdk-java-poc` as their sole Temporal SDK dependency. The POC provides both the public Java
 API and its implementation.
 
-- Copy the public API types from SDK Java, including the annotations, options, and other
-  types needed by their signatures. Use SDK Java revision `2ff9c2c1` as the starting API
-  reference and retain upstream license notices with copied source. Preserve package names
-  and signatures for the API surface implemented by the POC.
-- Write a new Java implementation over the Core activation and completion protocol.
-  Core owns workflow task polling, history replay, and the state machines. The POC owns
-  workflow execution and scheduling in Java, application callbacks, and Java gRPC transport.
-- Target source compatibility for the copied API on JDK 21. The POC starts fresh workflow
-  runs on Core and replays their Core-authored histories. The legacy Java SDK continues
-  running workflows that started on its engine.
+- Compile the Java API, gRPC client, and deterministic workflow runner from pinned SDK Java
+  source at revision `2ff9c2c1`. Package them with Core in the POC artifact.
+- Drive the existing Java workflow executor through a Core-backed `ReplayWorkflowContext`.
+  Core polls workflow tasks, replays history, matches commands, and requests cache eviction.
+  Java runs workflow code and manages workflow threads, promises, and callbacks.
+- Target JDK 21. The POC starts fresh workflow runs on Core and replays their Core-authored
+  histories. The legacy Java SDK continues running workflows that started on its engine.
 
-The first milestone supports typed workflow registration, synchronous invocation, and durable
-timers through `Workflow.sleep`. The timer API slice supports the `default` namespace, a
-plaintext service connection, public workflow implementations with no-argument
-constructors, `String` arguments, and `String` or `void` results.
+The timer milestone covers typed workflow registration, synchronous invocation, and durable
+timers through `Workflow.sleep`, including replay after a worker restart. Worker support for
+activities, Nexus, updates, continue-as-new, side effects, version markers, and offline history
+replay is outside this milestone.
 
 ## Build
 
-Use JDK 21, Python 3.11+, Git, curl, Rustup, and `protoc`. The smoke test also needs the
-Temporal CLI.
+Use JDK 21, Python 3.11+, Git, curl, and Rustup. The smoke test also needs the Temporal CLI.
 
 ```sh
 ./bootstrap.sh
 ./gradlew publish
 ```
 
-Bootstrap checks out public SDK Rust revision `10fdaa23` and applies this repository's patches,
+Bootstrap checks out the pinned SDK Java source and SDK Rust revision `10fdaa23`, then applies
+this repository's Rust patches,
 including the JVM build patch from `0fc90e3c`. It also pins the compiler to upstream
 [`experimental2` at `99ff1bd`](https://github.com/IntegralPilot/rustc_codegen_jvm/commit/99ff1bd).
 The HTTP and Tonic crate archives are checksum-verified before patching. The patches are applied
 to local copies under `.deps/`.
 
-Gradle runs the pinned JVM Rust compiler, generates the protobuf descriptor set, and builds one
-JAR containing Java and SDK Core bytecode. It publishes `io.temporal:sdk-java-poc:0.1.0-SNAPSHOT` to the file repository at
+Gradle runs the pinned JVM Rust compiler, generates Java protobuf classes and gRPC stubs from
+Core’s schemas, and builds one JAR containing Java and SDK Core bytecode. It publishes `io.temporal:sdk-java-poc:0.1.0-SNAPSHOT` to the file repository at
 `build/maven-repository/`. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
 checkout at the same revision. `./build.sh` also runs `./gradlew publish`.
 
 The standalone `poc-timer` build on the `codex/sdk-java-poc` branch of `samples-java`
-resolves this Maven artifact and demonstrates the public API.
+resolves this Maven artifact and demonstrates the public API. Its restart verifier kills the
+first worker while the first timer is pending, starts a new JVM, and checks the result and server
+history.
 
 ## Run
 
@@ -82,12 +81,13 @@ A `CoreWorker` takes a caller-owned `io.grpc.Channel`, namespace, task queue, an
 handler. Handler input and output are the serialized SDK Core
 [`WorkflowActivation`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_activation/workflow_activation.proto)
 and [`WorkflowActivationCompletion`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_completion/workflow_completion.proto)
-messages. Java code supplies workflow execution logic. SDK Core supplies workflow task handling.
+messages. `CoreWorkflowActivationHandler` decodes jobs, drives `ReplayWorkflowExecutor`,
+and collects typed commands from `CoreReplayWorkflowContext`. An initialize job supplies
+the start attributes used by the Java runner. A timer resolution queues the existing Java
+timer callback. An eviction closes the Java runner for that run.
 
-The bridge handles workflow tasks. The example uses a plaintext local gRPC channel and a minimal
-Java workflow handler. Legacy Java histories, activities, Nexus, and connection lifecycle behavior
-at scale remain unverified. The workflow smoke tests verify workflow completion and clean
-worker shutdown.
+The low-level smoke tests exercise the bridge directly and check clean worker shutdown.
+The public timer sample exercises the SDK Java runner and the Core-backed context.
 
 ## JVM worker workarounds
 
