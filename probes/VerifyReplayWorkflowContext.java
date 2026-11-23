@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 
 /** Executable contract check for the Java runner's Core workflow context. */
 final class VerifyReplayWorkflowContext {
-  private static final Set<String> UNIMPLEMENTED = Set.of("sideEffect", "mutableSideEffect");
+  private static final Set<String> UNSUPPORTED_OPERATIONS = Set.of("sideEffect", "mutableSideEffect");
 
   public static void main(String[] args) throws ReflectiveOperationException {
     for (Method method : Workflow.class.getMethods()) {
@@ -71,11 +71,9 @@ final class VerifyReplayWorkflowContext {
             WorkflowExecutionStartedEventAttributes.getDefaultInstance(),
             InitializeWorkflow.getDefaultInstance(),
             SingleWorkerOptions.newBuilder().build());
-    Class<?> unimplemented = Class.forName(contract.getPackageName() + ".UnimplementedException");
-
     var checked = new TreeSet<String>();
     for (Method method : contract.getMethods()) {
-      if (!UNIMPLEMENTED.contains(method.getName())) {
+      if (!UNSUPPORTED_OPERATIONS.contains(method.getName())) {
         continue;
       }
       Object[] arguments =
@@ -87,19 +85,19 @@ final class VerifyReplayWorkflowContext {
         throw new AssertionError(method.getName() + " returned instead of throwing");
       } catch (InvocationTargetException error) {
         Throwable cause = error.getCause();
-        if (!unimplemented.isInstance(cause)
+        if (!(cause instanceof UnsupportedOperationException)
             || !cause.getMessage().startsWith(method.getName() + " ")) {
           throw new AssertionError(method.getName() + " threw the wrong exception", cause);
         }
       }
       checked.add(method.getName());
     }
-    if (!checked.equals(UNIMPLEMENTED)) {
+    if (!checked.equals(UNSUPPORTED_OPERATIONS)) {
       throw new AssertionError(
-          "Some unimplemented operations are absent from the SDK Java contract");
+          "Some unsupported operations are absent from the SDK Java contract");
     }
     System.out.printf(
-        "Verified %d context methods and %d unimplemented operations.%n",
+        "Verified %d context methods and %d unsupported operations.%n",
         expected.size(), checked.size());
   }
 

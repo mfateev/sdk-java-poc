@@ -581,7 +581,8 @@ final class CoreReplayWorkflowContext extends ReplayWorkflowExecutor.CompletionS
       Func<Optional<Payloads>> func,
       UserMetadata metadata,
       Functions.Proc1<Optional<Payloads>> callback) {
-    throw new UnimplementedException("sideEffect");
+    throw new UnsupportedOperationException(
+        "sideEffect is unsupported in the Core workflow context");
   }
 
   @Override
@@ -590,7 +591,8 @@ final class CoreReplayWorkflowContext extends ReplayWorkflowExecutor.CompletionS
       UserMetadata metadata,
       Func1<Optional<Payloads>, Optional<Payloads>> func,
       Functions.Proc1<Optional<Payloads>> callback) {
-    throw new UnimplementedException("mutableSideEffect");
+    throw new UnsupportedOperationException(
+        "mutableSideEffect is unsupported in the Core workflow context");
   }
 
   @Override

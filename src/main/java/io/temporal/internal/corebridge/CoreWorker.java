@@ -32,20 +32,9 @@ public final class CoreWorker implements AutoCloseable {
     }
 
     private static final String DEFAULT_BUILD_ID = "sdk-java-poc";
-    private static final WorkerVersioningOptions DEFAULT_VERSIONING =
-        new WorkerVersioningOptions(DEFAULT_BUILD_ID, false, null);
     private static final AtomicLong NEXT = new AtomicLong(1);
     private final long context = NEXT.getAndIncrement();
     private final CompletableFuture<Void> completion = new CompletableFuture<>();
-
-    public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler) {
-        this(channel, namespace, taskQueue, handler, null);
-    }
-
-    public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler,
-                      LocalActivityHandler localActivities) {
-        this(channel, namespace, taskQueue, handler, localActivities, DEFAULT_VERSIONING);
-    }
 
     public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler,
                       LocalActivityHandler localActivities, WorkerVersioningOptions versioning) {

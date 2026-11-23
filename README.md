@@ -70,8 +70,8 @@ where `ReplayWorkflowExecutor.java` and `SyncWorkflowWorker.java` connect the ru
 
 The verifier compares the compiled interface and its nested types with a separate compilation of
 the verbatim SDK Java sources. It checks every public instance method of the Core implementation,
-including inherited methods and generic signatures.
-It calls each unimplemented operation and checks that it throws `UnimplementedException`.
+including inherited methods and generic signatures. It checks that the internal side-effect
+methods throw `UnsupportedOperationException`.
 Gradle's `check` runs this verification against the packaged SDK JAR.
 
 With the Temporal CLI on your path, run the activation regression test against a temporary local
@@ -84,7 +84,8 @@ server. The test restarts the worker after the operation results are in history 
 ## Bridge surface
 
 `io.temporal.internal.corebridge.CoreWorker` takes a caller-owned `io.grpc.Channel`, namespace,
-task queue, and Java activation handler. Handler input and output are the serialized SDK Core
+task queue, Java activation handler, optional local activity handler, and worker versioning options.
+Activation handler input and output are the serialized SDK Core
 [`WorkflowActivation`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_activation/workflow_activation.proto)
 and [`WorkflowActivationCompletion`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_completion/workflow_completion.proto)
 messages. `CoreWorkflowActivationHandler` decodes jobs, drives `ReplayWorkflowExecutor`,
