@@ -1,4 +1,4 @@
-package io.temporal.internal.worker;
+package io.temporal.internal.corebridge;
 
 import com.google.protobuf.ByteString;
 import coresdk.CoreInterface.ActivityTaskCompletion;
@@ -12,23 +12,26 @@ import io.temporal.api.failure.v1.CanceledFailureInfo;
 import io.temporal.api.failure.v1.Failure;
 import io.temporal.api.workflowservice.v1.PollActivityTaskQueueResponse;
 import io.temporal.internal.activity.ActivityTaskHandlerImpl;
+import io.temporal.internal.worker.ActivityTask;
+import io.temporal.internal.worker.ActivityTaskHandler;
+import io.temporal.internal.worker.SingleWorkerOptions;
 import io.temporal.worker.tuning.SlotPermit;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /** Runs Core-dispatched local activities through SDK Java's activity handler. */
-final class CoreLocalActivityHandler implements AutoCloseable {
+public final class CoreLocalActivityHandler implements AutoCloseable {
   private final ActivityTaskHandlerImpl handler;
   private final SingleWorkerOptions options;
   private final ConcurrentHashMap<ByteString, Execution> executions = new ConcurrentHashMap<>();
 
-  CoreLocalActivityHandler(ActivityTaskHandlerImpl handler, SingleWorkerOptions options) {
+  public CoreLocalActivityHandler(ActivityTaskHandlerImpl handler, SingleWorkerOptions options) {
     this.handler = handler;
     this.options = options;
   }
 
-  void dispatch(byte[] bytes, Consumer<byte[]> complete) throws IOException {
+  public void dispatch(byte[] bytes, Consumer<byte[]> complete) throws IOException {
     var task = ActivityTaskOuterClass.ActivityTask.parseFrom(bytes);
     ByteString token = task.getTaskToken();
     switch (task.getVariantCase()) {

@@ -38,16 +38,16 @@ static LOCAL_ACTIVITY_RESULTS: LazyLock<Mutex<LocalActivityResults>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 unsafe extern "C" {
-    #[link_name = "jvm:static:poc/JavaHost:handleActivation"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:handleActivation"]
     fn handle_activation(context: i64, activation: *const u8, length: i32) -> i32;
 
-    #[link_name = "jvm:static:poc/JavaHost:copyCompletion"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:copyCompletion"]
     fn copy_completion(context: i64, destination: *mut u8, length: i32) -> bool;
 
-    #[link_name = "jvm:static:poc/JavaHost:dispatchLocalActivity"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:dispatchLocalActivity"]
     fn dispatch_local_activity(context: i64, task: *const u8, length: i32) -> bool;
 
-    #[link_name = "jvm:static:poc/JavaHost:workerFailed"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:workerFailed"]
     fn worker_failed(context: i64, message: *const u8, length: i32);
 }
 

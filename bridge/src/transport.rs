@@ -18,10 +18,10 @@ static RPCS: LazyLock<Mutex<HashMap<i64, oneshot::Sender<Reply>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 unsafe extern "C" {
-    #[link_name = "jvm:static:poc/JavaHost:startRpc"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:startRpc"]
     fn start_rpc(context: i64, token: i64, request: *const u8, length: i32) -> bool;
 
-    #[link_name = "jvm:static:poc/JavaHost:cancelRpc"]
+    #[link_name = "jvm:static:io/temporal/internal/corebridge/JavaHost:cancelRpc"]
     fn cancel_rpc(context: i64, token: i64);
 }
 

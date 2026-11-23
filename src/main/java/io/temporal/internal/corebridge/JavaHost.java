@@ -1,4 +1,4 @@
-package poc;
+package io.temporal.internal.corebridge;
 
 import io.grpc.CallOptions;
 import io.grpc.Channel;

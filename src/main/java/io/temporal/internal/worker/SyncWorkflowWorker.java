@@ -5,6 +5,8 @@ import io.temporal.common.converter.EncodedValues;
 import io.temporal.internal.activity.ActivityTaskHandlerImpl;
 import io.temporal.internal.activity.LocalActivityExecutionContextFactoryImpl;
 import io.temporal.internal.common.WorkflowExecutionHistory;
+import io.temporal.internal.corebridge.CoreLocalActivityHandler;
+import io.temporal.internal.corebridge.CoreWorker;
 import io.temporal.internal.replay.CoreWorkflowActivationHandler;
 import io.temporal.internal.sync.POJOWorkflowImplementationFactory;
 import io.temporal.internal.sync.WorkflowThreadExecutor;
@@ -22,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import poc.CoreWorker;
 
 /** Assembles the existing Java workflow runtime and a Core worker for one task queue. */
 public final class SyncWorkflowWorker implements SuspendableWorker {

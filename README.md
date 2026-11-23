@@ -83,8 +83,8 @@ server. The test restarts the worker after the operation results are in history 
 
 ## Bridge surface
 
-A `CoreWorker` takes a caller-owned `io.grpc.Channel`, namespace, task queue, and Java activation
-handler. Handler input and output are the serialized SDK Core
+`io.temporal.internal.corebridge.CoreWorker` takes a caller-owned `io.grpc.Channel`, namespace,
+task queue, and Java activation handler. Handler input and output are the serialized SDK Core
 [`WorkflowActivation`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_activation/workflow_activation.proto)
 and [`WorkflowActivationCompletion`](https://github.com/temporalio/sdk-rust/blob/10fdaa23/crates/protos/protos/local/temporal/sdk/core/workflow_completion/workflow_completion.proto)
 messages. `CoreWorkflowActivationHandler` decodes jobs, drives `ReplayWorkflowExecutor`,
