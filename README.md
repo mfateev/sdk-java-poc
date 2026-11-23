@@ -23,8 +23,9 @@ API and its implementation.
 The POC supports typed workflows, timers, signals, queries, updates, remote and local activities,
 child workflows, external workflow signals and cancellation, Nexus calls, continue-as-new, and
 `Workflow.getVersion` through Core patch markers. Core dispatches local activities to Java.
-The existing Java workers continue to poll remote activity and Nexus handler tasks. Side effects,
-mutable side effects, and offline history replay are outside the POC.
+The existing Java workers continue to poll remote activity and Nexus handler tasks.
+The public `Workflow.sideEffect` and `Workflow.mutableSideEffect` overloads are commented out.
+Offline history replay is outside the POC.
 
 ## Build
 
@@ -59,8 +60,9 @@ history.
 ```
 
 The verifier compares the checked-in workflow runner, its callers, and the client source
-with the pinned SDK Java commit byte for byte. The checked-in sources include SDK Java’s
-Java 21 virtual-thread implementation. The Core integration sources live under `src/main/java`,
+with the pinned SDK Java commit byte for byte. It allows the specific comments that disable
+the public side-effect overloads in `Workflow.java` and checks that they are absent from the
+compiled API. The checked-in sources include SDK Java’s Java 21 virtual-thread implementation. The Core integration sources live under `src/main/java`,
 where `ReplayWorkflowExecutor.java` and `SyncWorkflowWorker.java` connect the runner to Core.
 
 The verifier compares the compiled interface and its nested types with a separate compilation of

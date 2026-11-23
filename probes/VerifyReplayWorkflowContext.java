@@ -3,6 +3,7 @@ import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.history.v1.WorkflowExecutionStartedEventAttributes;
 import io.temporal.internal.replay.ReplayWorkflowContext;
 import io.temporal.internal.worker.SingleWorkerOptions;
+import io.temporal.workflow.Workflow;
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -18,6 +19,12 @@ final class VerifyReplayWorkflowContext {
   private static final Set<String> UNIMPLEMENTED = Set.of("sideEffect", "mutableSideEffect");
 
   public static void main(String[] args) throws ReflectiveOperationException {
+    for (Method method : Workflow.class.getMethods()) {
+      if (method.getName().equals("sideEffect") || method.getName().equals("mutableSideEffect")) {
+        throw new AssertionError("The public Workflow API still exposes " + method.getName());
+      }
+    }
+
     Class<?> contract = ReplayWorkflowContext.class;
     Class<?> implementation =
         Class.forName(contract.getPackageName() + ".CoreReplayWorkflowContext");

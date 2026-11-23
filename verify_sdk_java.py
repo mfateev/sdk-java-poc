@@ -23,6 +23,7 @@ CORE_INTEGRATION = {
     "io/temporal/internal/worker/SyncWorkflowWorker.java",
 }
 VIRTUAL_THREAD_DELEGATE = "io/temporal/internal/task/VirtualThreadDelegate.java"
+WORKFLOW_SOURCE = "io/temporal/workflow/Workflow.java"
 
 
 def reference_sources(checkout, revision):
@@ -62,6 +63,21 @@ def reference_sources(checkout, revision):
     return expected
 
 
+def workflow_source_with_disabled_side_effects(source):
+    start = source.index(b"  /**\n   * Executes the provided function once, records its result")
+    end = source.index(b"  /**\n   * {@code getVersion}", start)
+    disabled = b"".join(
+        b"  // " + line.removeprefix(b"  ") if line.strip() else line
+        for line in source[start:end].splitlines(keepends=True)
+    )
+    prefix = source[:start].replace(
+        b"import java.util.function.BiPredicate;\n",
+        b"// import java.util.function.BiPredicate;\n",
+        1,
+    )
+    return prefix + b"  // Side-effect APIs are disabled in the Core POC.\n" + disabled + source[end:]
+
+
 def java_files(root):
     return {file.relative_to(root).as_posix(): file for file in root.rglob("*.java")}
 
@@ -73,6 +89,7 @@ def verify_sources(checkout, sources):
         raise ValueError("Could not read the pinned SDK Java revision from bootstrap.sh")
     revision = match.group(1)
     expected = reference_sources(checkout, revision)
+    expected[WORKFLOW_SOURCE] = workflow_source_with_disabled_side_effects(expected[WORKFLOW_SOURCE])
     checked_in = java_files(sources)
     local = java_files(ROOT / "src/main/java")
     problems = []
@@ -89,7 +106,11 @@ def verify_sources(checkout, sources):
     )
     if problems:
         raise ValueError("SDK Java source parity failed:\n  " + "\n  ".join(problems))
-    print(f"Verified {len(expected)} verbatim SDK Java sources at {revision[:8]}.", flush=True)
+    print(
+        f"Verified {len(expected) - 1} verbatim SDK Java sources at {revision[:8]} "
+        "and the disabled Workflow side-effect API.",
+        flush=True,
+    )
 
 
 def verify_compiled_contract(java, classpath, sources):
