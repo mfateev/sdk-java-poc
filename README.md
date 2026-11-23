@@ -51,6 +51,9 @@ Core’s schemas, and builds one JAR containing Java and SDK Core bytecode. It p
 `build/maven-repository/`. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
 checkout at the same revision. `./build.sh` also runs `./gradlew publish`.
 
+Run the existing Java samples against the published POC artifact from the
+[samples-java POC branch](https://github.com/mfateev/temporal-java-samples/tree/codex/sdk-java-poc).
+
 ## Verify the SDK
 
 ```sh
