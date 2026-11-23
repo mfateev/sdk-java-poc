@@ -11,8 +11,9 @@ Build `sdk-java-poc` as a standalone Java SDK backed by SDK Core. Applications d
 `sdk-java-poc` as their sole Temporal SDK dependency. The POC provides both the public Java
 API and its implementation.
 
-- Compile the Java API, gRPC client, and deterministic workflow runner from pinned SDK Java
-  source at revision `2ff9c2c1`. Package them with Core in the POC artifact.
+- Check in the Java API, gRPC client, and deterministic workflow runner from SDK Java
+  revision `2ff9c2c1` under [`src/sdk-java/java`](src/sdk-java/java). Gradle compiles that
+  source directly and packages it with Core in the POC artifact.
 - Drive the existing Java workflow executor through a Core-backed `ReplayWorkflowContext`.
   Core polls workflow tasks, replays history, matches commands, and requests cache eviction.
   Java runs workflow code and manages workflow threads, promises, and callbacks.
@@ -33,9 +34,9 @@ Use JDK 21, Python 3.11+, Git, curl, and Rustup. The smoke test also needs the T
 ./gradlew publish
 ```
 
-Bootstrap checks out the pinned SDK Java source and SDK Rust revision `10fdaa23`, then applies
-this repository's Rust patches,
-including the JVM build patch from `0fc90e3c`. It also pins the compiler to upstream
+Bootstrap fetches the pinned SDK Java commit for source verification and checks out SDK Rust
+revision `10fdaa23`. It applies this repository's Rust patches, including the JVM build
+patch from `0fc90e3c`. It also pins the compiler to upstream
 [`experimental2` at `99ff1bd`](https://github.com/IntegralPilot/rustc_codegen_jvm/commit/99ff1bd).
 The HTTP and Tonic crate archives are checksum-verified before patching. The patches are applied
 to local copies under `.deps/`.
@@ -56,10 +57,10 @@ history.
 ./gradlew verifySdkJava
 ```
 
-The verifier compares the sources staged for compilation with the pinned SDK Java Git commit.
-It checks the workflow runner, its callers, and the client source byte for byte. The two local
-integration files are `ReplayWorkflowExecutor.java` and `SyncWorkflowWorker.java`. The build
-copies SDK Java’s own Java 21 virtual-thread implementation.
+The verifier compares the checked-in workflow runner, its callers, and the client source
+with the pinned SDK Java commit byte for byte. The checked-in sources include SDK Java’s
+Java 21 virtual-thread implementation. The Core integration sources live under `src/main/java`,
+where `ReplayWorkflowExecutor.java` and `SyncWorkflowWorker.java` connect the runner to Core.
 
 The verifier compares the compiled interface and its nested types with a separate compilation of
 the verbatim SDK Java sources. It checks every public instance method of the Core implementation,

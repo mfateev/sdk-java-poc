@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the SDK Java source copies and the Core workflow context contract."""
+"""Verify the checked-in SDK Java sources and the Core workflow context contract."""
 
 import argparse
 from difflib import unified_diff
@@ -66,22 +66,22 @@ def java_files(root):
     return {file.relative_to(root).as_posix(): file for file in root.rglob("*.java")}
 
 
-def verify_copies(checkout, copies):
+def verify_sources(checkout, sources):
     bootstrap = (ROOT / "bootstrap.sh").read_text()
     match = re.search(r"^java_revision=([0-9a-f]{40})$", bootstrap, re.MULTILINE)
     if not match:
         raise ValueError("Could not read the pinned SDK Java revision from bootstrap.sh")
     revision = match.group(1)
     expected = reference_sources(checkout, revision)
-    copied = java_files(copies)
+    checked_in = java_files(sources)
     local = java_files(ROOT / "src/main/java")
     problems = []
-    problems.extend(f"missing copy {name}" for name in sorted(expected.keys() - copied.keys()))
-    problems.extend(f"unexpected copy {name}" for name in sorted(copied.keys() - expected.keys()))
+    problems.extend(f"missing source {name}" for name in sorted(expected.keys() - checked_in.keys()))
+    problems.extend(f"unexpected source {name}" for name in sorted(checked_in.keys() - expected.keys()))
     problems.extend(
-        f"changed copy {name}"
-        for name in sorted(copied.keys() & expected.keys())
-        if copied[name].read_bytes() != expected[name]
+        f"changed source {name}"
+        for name in sorted(checked_in.keys() & expected.keys())
+        if checked_in[name].read_bytes() != expected[name]
     )
     problems.extend(f"local source shadows {name}" for name in sorted(local.keys() & expected.keys()))
     problems.extend(
@@ -92,9 +92,9 @@ def verify_copies(checkout, copies):
     print(f"Verified {len(expected)} verbatim SDK Java sources at {revision[:8]}.", flush=True)
 
 
-def verify_compiled_contract(java, classpath, copies):
+def verify_compiled_contract(java, classpath, sources):
     # Recompile the two verbatim interfaces independently to catch stale or modified class files.
-    replay = copies / "io/temporal/internal/replay"
+    replay = sources / "io/temporal/internal/replay"
     java = Path(java)
     javac = str(java.with_name("javac" + java.suffix))
     javap = str(java.with_name("javap" + java.suffix))
@@ -125,15 +125,15 @@ def verify_compiled_contract(java, classpath, copies):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk-java", type=Path, default=ROOT / ".deps/sdk-java")
-    parser.add_argument("--copied-sources", type=Path, default=ROOT / "build/generated/sdk-java")
+    parser.add_argument("--sources", "--copied-sources", type=Path, default=ROOT / "src/sdk-java/java")
     parser.add_argument("--classpath", help="Defaults to the packaged JAR classpath in build/classpath.txt.")
     parser.add_argument("--java", default="java")
     args = parser.parse_args()
 
     try:
-        verify_copies(args.sdk_java, args.copied_sources)
+        verify_sources(args.sdk_java, args.sources)
         classpath = args.classpath or (ROOT / "build/classpath.txt").read_text().strip()
-        verify_compiled_contract(args.java, classpath, args.copied_sources)
+        verify_compiled_contract(args.java, classpath, args.sources)
         subprocess.run(
             [args.java, "--class-path", classpath, str(ROOT / "probes/VerifyReplayWorkflowContext.java")],
             check=True,

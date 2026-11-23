@@ -1,0 +1,127 @@
+package io.temporal.client.schedules;
+
+import io.temporal.api.enums.v1.ScheduleOverlapPolicy;
+import java.time.Duration;
+import java.util.Objects;
+
+/** Policies of a schedule. */
+public final class SchedulePolicy {
+  public static SchedulePolicy.Builder newBuilder() {
+    return new SchedulePolicy.Builder();
+  }
+
+  public static SchedulePolicy.Builder newBuilder(SchedulePolicy options) {
+    return new SchedulePolicy.Builder(options);
+  }
+
+  public static final class Builder {
+    private ScheduleOverlapPolicy overlap;
+    private Duration catchupWindow;
+    private boolean pauseOnFailure;
+
+    private Builder() {}
+
+    private Builder(SchedulePolicy options) {
+      if (options == null) {
+        return;
+      }
+      this.overlap = options.overlap;
+      this.catchupWindow = options.catchupWindow;
+      this.pauseOnFailure = options.pauseOnFailure;
+    }
+
+    /** Set the policy for what happens when an action is started while another is still running. */
+    public Builder setOverlap(ScheduleOverlapPolicy overlap) {
+      this.overlap = overlap;
+      return this;
+    }
+
+    /**
+     * Set the amount of time in the past to execute missed actions after a Temporal server is
+     * unavailable.
+     */
+    public Builder setCatchupWindow(Duration catchupWindow) {
+      this.catchupWindow = catchupWindow;
+      return this;
+    }
+
+    /** Set whether to pause the schedule if an action fails or times out. */
+    public Builder setPauseOnFailure(boolean pauseOnFailure) {
+      this.pauseOnFailure = pauseOnFailure;
+      return this;
+    }
+
+    public SchedulePolicy build() {
+      return new SchedulePolicy(
+          overlap == null ? ScheduleOverlapPolicy.SCHEDULE_OVERLAP_POLICY_SKIP : overlap,
+          catchupWindow,
+          pauseOnFailure);
+    }
+  }
+
+  private final ScheduleOverlapPolicy overlap;
+  private final Duration catchupWindow;
+  private final boolean pauseOnFailure;
+
+  private SchedulePolicy(
+      ScheduleOverlapPolicy overlap, Duration catchupWindow, boolean pauseOnFailure) {
+    this.overlap = overlap;
+    this.catchupWindow = catchupWindow;
+    this.pauseOnFailure = pauseOnFailure;
+  }
+
+  /**
+   * Gets the policy for what happens when an action is started while another is still running.
+   *
+   * @return the schedules overlap policy
+   */
+  public ScheduleOverlapPolicy getOverlap() {
+    return overlap;
+  }
+
+  /**
+   * Gets the amount of time in the past to execute missed actions after a Temporal server is
+   * unavailable.
+   *
+   * @return the schedules catchup window
+   */
+  public Duration getCatchupWindow() {
+    return catchupWindow;
+  }
+
+  /**
+   * Gets a value indicating whether to pause the schedule if an action fails or times out.
+   *
+   * @return if the schedule should pause on failure
+   */
+  public boolean isPauseOnFailure() {
+    return pauseOnFailure;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    SchedulePolicy that = (SchedulePolicy) o;
+    return pauseOnFailure == that.pauseOnFailure
+        && overlap == that.overlap
+        && Objects.equals(catchupWindow, that.catchupWindow);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(overlap, catchupWindow, pauseOnFailure);
+  }
+
+  @Override
+  public String toString() {
+    return "SchedulePolicy{"
+        + "overlap="
+        + overlap
+        + ", catchupWindow="
+        + catchupWindow
+        + ", pauseOnFailure="
+        + pauseOnFailure
+        + '}';
+  }
+}

@@ -55,6 +55,7 @@ fetch_checkout https://github.com/temporalio/sdk-rust.git "$core_revision" "$dep
   done
 )
 
+# The Gradle verifier compares the checked-in sources against this commit.
 fetch_checkout https://github.com/temporalio/sdk-java.git "$java_revision" "$deps/sdk-java"
 fetch_checkout https://github.com/IntegralPilot/rustc_codegen_jvm.git "$compiler_revision" "$deps/compiler"
 fetch_crate tonic 0.14.9 e2cdfc673aabd30fe8fee92e65837b644c37c5d47f0f97ae6d5e0f1237d15e1b

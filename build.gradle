@@ -105,23 +105,6 @@ dependencies {
     grpcCodeGenerator "io.grpc:protoc-gen-grpc-java:1.76.0:${classifier}@exe"
 }
 
-def sdkJava = layout.projectDirectory.dir('.deps/sdk-java')
-def sdkSources = tasks.register('prepareSdkJavaSources', Sync) {
-    from(sdkJava.dir('temporal-sdk/src/main/java')) {
-        exclude 'io/temporal/internal/replay/ReplayWorkflowExecutor.java'
-        exclude 'io/temporal/internal/worker/SyncWorkflowWorker.java'
-        exclude 'io/temporal/internal/task/VirtualThreadDelegate.java'
-    }
-    from(sdkJava.dir('temporal-sdk/src/main/java21'))
-    from(sdkJava.dir('temporal-serviceclient/src/main/java'))
-    into layout.buildDirectory.dir('generated/sdk-java')
-    doFirst {
-        if (!sdkJava.file('temporal-sdk/src/main/java/io/temporal/workflow/Workflow.java').asFile.isFile()) {
-            throw new GradleException('Run ./bootstrap.sh to fetch the pinned SDK Java sources')
-        }
-    }
-}
-
 def protos = layout.projectDirectory.dir('.deps/sdk-rust/crates/protos/protos')
 def protoRoots = ['local', 'api_upstream', 'api_cloud_upstream', 'testsrv_upstream']
     .collect { protos.dir(it).asFile }
@@ -170,7 +153,7 @@ def generateTemporalProtos = tasks.register('generateTemporalProtos') {
         }
     }
 }
-sourceSets.main.java.srcDir(sdkSources)
+sourceSets.main.java.srcDir('src/sdk-java/java')
 sourceSets.main.java.srcDir(generateTemporalProtos)
 tasks.named('compileJava', JavaCompile) {
     options.fork = true
@@ -179,7 +162,7 @@ tasks.named('compileJava', JavaCompile) {
 
 def javaLauncher = javaToolchains.launcherFor(java.toolchain)
 def verifySdkJava = tasks.register('verifySdkJava', Exec) {
-    description = 'Verifies the copied SDK Java sources and the Core workflow context contract.'
+    description = 'Verifies the checked-in SDK Java sources and the Core workflow context contract.'
     group = 'verification'
     dependsOn tasks.named('classes')
     doFirst {

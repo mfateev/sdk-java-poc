@@ -2,3 +2,7 @@
 *.patch whitespace=-blank-at-eol
 
 gradlew.bat text eol=crlf
+
+# Preserve the exact bytes checked in from SDK Java.
+src/sdk-java/java/** -text
+src/sdk-java/java/io/temporal/internal/task/VirtualThreadDelegate.java whitespace=-blank-at-eol
