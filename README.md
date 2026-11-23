@@ -1,9 +1,10 @@
 # SDK Java POC
 
-This repository experiments with running Temporal SDK Core as JVM bytecode. The Rust worker polls
-for workflow activations and accepts protobuf completions from Java. Java owns the gRPC channel,
-issues unary RPCs, and signals completion back to Rust. The bridge uses JVM classes and the Java
-NIO transport.
+The POC compiles Temporal SDK Core and its Rust bridge to JVM bytecode using
+[`rustc_codegen_jvm`](https://github.com/IntegralPilot/rustc_codegen_jvm).
+The Rust worker polls for workflow activations and accepts protobuf completions from Java.
+Java owns the gRPC channel, issues unary RPCs, and signals completion back to Rust.
+The bridge uses JVM classes and the Java NIO transport.
 
 ## Architecture decision
 
