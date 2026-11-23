@@ -14,6 +14,7 @@ import io.temporal.api.common.v1.Payload;
 import io.temporal.api.common.v1.Payloads;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.RetryState;
+import io.temporal.api.failure.v1.ActivityFailureInfo;
 import io.temporal.api.failure.v1.Failure;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.failure.ChildWorkflowFailure;
@@ -163,7 +164,10 @@ final class CoreWorkflowOperations {
                 case FAILED ->
                     callback.apply(
                         Optional.empty(),
-                        localFailure(parameters, result.getFailed().getFailure()));
+                        localFailure(
+                            parameters,
+                            wrapLocalActivityFailure(
+                                parameters, result.getFailed().getFailure())));
                 case CANCELLED ->
                     callback.apply(
                         Optional.empty(),
@@ -204,6 +208,31 @@ final class CoreWorkflowOperations {
       ExecuteLocalActivityParameters parameters, Failure failure) {
     return new LocalActivityFailedException(
         failure, parameters.getOriginalScheduledTimestamp(), parameters.getInitialAttempt(), null);
+  }
+
+  private static Failure wrapLocalActivityFailure(
+      ExecuteLocalActivityParameters parameters, Failure cause) {
+    if (cause.hasActivityFailureInfo()) {
+      return cause;
+    }
+    var info =
+        ActivityFailureInfo.newBuilder()
+            .setActivityId(parameters.getActivityId())
+            .setActivityType(parameters.getActivityType());
+    String message = "Local Activity task failed";
+    if (cause.hasTimeoutFailureInfo()) {
+      // Core wraps timeouts this way during execution, but replays the raw cause from the marker.
+      message = "Local Activity timed out";
+      info.setRetryState(RetryState.RETRY_STATE_CANCEL_REQUESTED);
+    } else if (cause.getApplicationFailureInfo().getNonRetryable()) {
+      // Core does not report the final retry decision for an unwrapped activity failure.
+      info.setRetryState(RetryState.RETRY_STATE_NON_RETRYABLE_FAILURE);
+    }
+    return Failure.newBuilder()
+        .setMessage(message)
+        .setActivityFailureInfo(info)
+        .setCause(cause)
+        .build();
   }
 
   void resolveActivity(ResolveActivity job) {

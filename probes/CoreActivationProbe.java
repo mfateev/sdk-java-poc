@@ -7,11 +7,13 @@ import io.temporal.activity.Activity;
 import io.temporal.activity.ActivityInterface;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.activity.LocalActivityOptions;
+import io.temporal.api.enums.v1.RetryState;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.client.WorkflowUpdateException;
 import io.temporal.common.RetryOptions;
+import io.temporal.failure.ActivityFailure;
 import io.temporal.failure.ApplicationFailure;
 import io.temporal.nexus.Nexus;
 import io.temporal.nexus.WorkflowRunOperation;
@@ -109,6 +111,19 @@ public class CoreActivationProbe {
                   .build());
       String remoteResult = remote.echo("remote");
       String localResult = local.echo("local");
+      try {
+        local.echo("local-failure");
+        throw new AssertionError("Expected the local activity to fail");
+      } catch (ActivityFailure failure) {
+        if (!failure.getActivityType().equals("Echo")
+            || failure.getActivityId().isEmpty()
+            || failure.getRetryState() != RetryState.RETRY_STATE_NON_RETRYABLE_FAILURE
+            || !(failure.getCause() instanceof ApplicationFailure cause)
+            || !cause.getType().equals("ProbeLocalFailure")
+            || !cause.isNonRetryable()) {
+          throw new AssertionError("Unexpected local activity failure", failure);
+        }
+      }
       String childResult = Workflow.newChildWorkflowStub(Child.class).run("child");
       Workflow.newExternalWorkflowStub(Target.class, target).mark("sent");
       Workflow.newUntypedExternalWorkflowStub(target).cancel();
@@ -187,6 +202,10 @@ public class CoreActivationProbe {
   public static class EchoActivityImpl implements EchoActivity {
     @Override
     public String echo(String value) {
+      if (value.equals("local-failure")) {
+        throw ApplicationFailure.newNonRetryableFailure(
+            "exercise local failure", "ProbeLocalFailure");
+      }
       var info = Activity.getExecutionContext().getInfo();
       if (info.isLocal() && info.getAttempt() == 1) {
         throw ApplicationFailure.newFailure("exercise Core local retry backoff", "Probe");
