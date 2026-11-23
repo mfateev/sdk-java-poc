@@ -26,11 +26,13 @@ import io.temporal.api.history.v1.WorkflowExecutionStartedEventAttributes;
 import io.temporal.api.sdk.v1.UserMetadata;
 import io.temporal.api.taskqueue.v1.TaskQueue;
 import io.temporal.common.RetryOptions;
+import io.temporal.common.VersioningBehavior;
 import io.temporal.failure.CanceledFailure;
 import io.temporal.internal.common.ProtobufTimeUtils;
 import io.temporal.internal.common.SdkFlag;
 import io.temporal.internal.statemachines.*;
 import io.temporal.internal.worker.SingleWorkerOptions;
+import io.temporal.internal.worker.WorkerVersioningProtoUtils;
 import io.temporal.payload.context.WorkflowSerializationContext;
 import io.temporal.workflow.Functions;
 import io.temporal.workflow.Functions.Func;
@@ -151,8 +153,11 @@ final class CoreReplayWorkflowContext extends ReplayWorkflowExecutor.CompletionS
     tryUseSdkFlag(SdkFlag.SKIP_YIELD_ON_DEFAULT_VERSION);
   }
 
-  WorkflowActivationCompletion finishActivation() {
+  WorkflowActivationCompletion finishActivation(@Nullable VersioningBehavior behavior) {
     commands.addAllUsedInternalFlags(usedFlags);
+    if (behavior != null) {
+      commands.setVersioningBehavior(WorkerVersioningProtoUtils.behaviorToProto(behavior));
+    }
     return WorkflowActivationCompletion.newBuilder()
         .setRunId(getRunId())
         .setSuccessful(commands)

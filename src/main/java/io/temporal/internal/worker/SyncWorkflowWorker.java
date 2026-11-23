@@ -103,7 +103,8 @@ public final class SyncWorkflowWorker implements SuspendableWorker {
             namespace,
             taskQueue,
             handler::activate,
-            localActivityHandler::dispatch);
+            localActivityHandler::dispatch,
+            options.getWorkerVersioningOptions());
     termination =
         core.completion()
             .whenComplete(

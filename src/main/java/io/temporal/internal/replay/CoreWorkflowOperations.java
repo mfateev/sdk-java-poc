@@ -525,6 +525,10 @@ final class CoreWorkflowOperations {
 
   Integer getVersion(
       String changeId, int min, int max, Functions.Proc2<Integer, RuntimeException> callback) {
+    boolean absentFromReplay =
+        context.isReplaying()
+            && !versions.containsKey(changeId)
+            && !recordedVersions.containsKey(changeId);
     context.tryUseSdkFlag(SdkFlag.SKIP_YIELD_ON_VERSION);
     int version =
         versions.computeIfAbsent(
@@ -566,7 +570,8 @@ final class CoreWorkflowOperations {
     } else {
       callback.apply(version, null);
     }
-    return version;
+    // The Java runner uses null to recognize a getVersion call introduced after this history.
+    return absentFromReplay ? null : version;
   }
 
   private void cancel(

@@ -21,9 +21,11 @@ API and its implementation.
   histories. The legacy Java SDK continues running workflows that started on its engine.
 
 The POC supports typed workflows, timers, signals, queries, updates, remote and local activities,
-child workflows, external workflow signals and cancellation, Nexus calls, continue-as-new, and
-`Workflow.getVersion` through Core patch markers. Core dispatches local activities to Java.
-The existing Java workers continue to poll remote activity and Nexus handler tasks.
+child workflows, external workflow signals and cancellation, Nexus calls, continue-as-new, Worker
+Deployment Versioning, and `Workflow.getVersion` through Core patch markers. Core dispatches local
+activities to Java. The existing Java workers continue to poll remote activity and Nexus handler
+tasks. Core uses `WorkerOptions` to configure workflow pollers and reports each workflow's pinned
+or auto-upgrade behavior from the Java runner.
 The public `Workflow.sideEffect` and `Workflow.mutableSideEffect` overloads are commented out.
 Offline history replay is outside the POC.
 

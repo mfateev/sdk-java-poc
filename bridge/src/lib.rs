@@ -14,9 +14,13 @@ use temporalio_client::{Connection, ConnectionOptions, callback_based::CallbackB
 use temporalio_common::{
     protos::{
         coresdk::{ActivityTaskCompletion, workflow_completion::WorkflowActivationCompletion},
-        temporal::api::failure::v1::Failure,
+        temporal::api::{
+            deployment::v1::WorkerDeploymentOptions as ProtoDeploymentOptions,
+            enums::v1::{VersioningBehavior, WorkerVersioningMode},
+            failure::v1::Failure,
+        },
     },
-    worker::WorkerTaskTypes,
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, RuntimeOptions, Worker, WorkerConfig,
@@ -91,15 +95,24 @@ pub unsafe fn run_worker(context: i64, config: *const u8, length: i32) {
             .ok_or_else(|| anyhow!("invalid worker options"))?;
         let namespace = std::str::from_utf8(transport::take_field(&mut config)?)?.to_owned();
         let task_queue = std::str::from_utf8(transport::take_field(&mut config)?)?.to_owned();
-        let local_activities = match config {
-            [0] => false,
-            [1] => true,
-            _ => bail!("invalid local activity worker option"),
+        let [local_activities, legacy_versioning, rest @ ..] = config else {
+            bail!("missing worker options");
         };
+        if *local_activities > 1 || *legacy_versioning > 1 {
+            bail!("invalid worker options");
+        }
+        let versioning = worker_versioning(rest, *legacy_versioning != 0)?;
         let tokio = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()?;
-        tokio.block_on(run(context, stop, namespace, task_queue, local_activities))
+        tokio.block_on(run(
+            context,
+            stop,
+            namespace,
+            task_queue,
+            *local_activities != 0,
+            versioning,
+        ))
     })();
     WORKERS.lock().unwrap().remove(&context);
     LOCAL_ACTIVITY_RESULTS.lock().unwrap().remove(&context);
@@ -107,6 +120,35 @@ pub unsafe fn run_worker(context: i64, config: *const u8, length: i32) {
         let message = format!("{error:#}");
         unsafe { worker_failed(context, message.as_ptr(), message.len() as i32) };
     }
+}
+
+fn worker_versioning(mut options: &[u8], legacy: bool) -> anyhow::Result<WorkerVersioningStrategy> {
+    let build_id = std::str::from_utf8(transport::take_field(&mut options)?)?.to_owned();
+    let deployment = transport::take_field(&mut options)?;
+    let behavior = VersioningBehavior::try_from(i32::from_be_bytes(options.try_into()?))?;
+    if deployment.is_empty() {
+        return Ok(if legacy {
+            WorkerVersioningStrategy::LegacyBuildIdBased { build_id }
+        } else {
+            WorkerVersioningStrategy::None { build_id }
+        });
+    }
+
+    let deployment = ProtoDeploymentOptions::decode(deployment)?;
+    let is_versioned = deployment.worker_versioning_mode() == WorkerVersioningMode::Versioned;
+    let version = WorkerDeploymentVersion::builder()
+        .deployment_name(deployment.deployment_name)
+        .build_id(deployment.build_id)
+        .build();
+    let default_behavior = match behavior {
+        VersioningBehavior::Unspecified => None,
+        behavior => Some(behavior.into()),
+    };
+    let options = WorkerDeploymentOptions::new(version)
+        .use_worker_versioning(is_versioned)
+        .maybe_default_versioning_behavior(default_behavior)
+        .build();
+    Ok(WorkerVersioningStrategy::WorkerDeploymentBased(options))
 }
 
 /// Enqueues a completion from the Java thread that ran the local activity.
@@ -166,6 +208,7 @@ async fn run(
     namespace: String,
     task_queue: String,
     local_activities: bool,
+    versioning: WorkerVersioningStrategy,
 ) -> anyhow::Result<()> {
     let runtime = CoreRuntime::new_assume_tokio(
         RuntimeOptions::builder()
@@ -186,9 +229,7 @@ async fn run(
         .max_cached_workflows(2)
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2))
         .max_outstanding_workflow_tasks(2usize)
-        .versioning_strategy(WorkerVersioningStrategy::None {
-            build_id: "sdk-java-poc".to_owned(),
-        })
+        .versioning_strategy(versioning)
         .build()
         .map_err(|e| anyhow!(e))?;
     let worker =

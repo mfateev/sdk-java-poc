@@ -97,7 +97,7 @@ public final class CoreWorkflowActivationHandler implements AutoCloseable {
     if (failure != null) {
       throw new IllegalStateException("Java workflow task failed", failure);
     }
-    return run.context.finishActivation();
+    return run.context.finishActivation(run.executor.versioningBehavior());
   }
 
   private Run start(WorkflowActivation activation, InitializeWorkflow initialize) throws Exception {

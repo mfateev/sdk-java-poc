@@ -1,6 +1,9 @@
 package poc;
 
 import io.grpc.Channel;
+import io.temporal.common.VersioningBehavior;
+import io.temporal.internal.worker.WorkerVersioningOptions;
+import io.temporal.internal.worker.WorkerVersioningProtoUtils;
 import org.rustlang.runtime.Pointer;
 import temporal_java_bridge.temporal_java_bridge;
 
@@ -28,6 +31,9 @@ public final class CoreWorker implements AutoCloseable {
         void dispatch(byte[] task, Consumer<byte[]> complete) throws Exception;
     }
 
+    private static final String DEFAULT_BUILD_ID = "sdk-java-poc";
+    private static final WorkerVersioningOptions DEFAULT_VERSIONING =
+        new WorkerVersioningOptions(DEFAULT_BUILD_ID, false, null);
     private static final AtomicLong NEXT = new AtomicLong(1);
     private final long context = NEXT.getAndIncrement();
     private final CompletableFuture<Void> completion = new CompletableFuture<>();
@@ -38,10 +44,15 @@ public final class CoreWorker implements AutoCloseable {
 
     public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler,
                       LocalActivityHandler localActivities) {
+        this(channel, namespace, taskQueue, handler, localActivities, DEFAULT_VERSIONING);
+    }
+
+    public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler,
+                      LocalActivityHandler localActivities, WorkerVersioningOptions versioning) {
         if (namespace.isBlank() || taskQueue.isBlank()) {
             throw new IllegalArgumentException("namespace and task queue must be nonempty");
         }
-        byte[] config = options(namespace, taskQueue, localActivities != null);
+        byte[] config = options(namespace, taskQueue, localActivities != null, versioning);
         JavaHost host = new JavaHost(Objects.requireNonNull(channel), Objects.requireNonNull(handler), localActivities);
         if (!temporal_java_bridge.register_worker(context)) {
             throw new IllegalStateException("Core worker ID already registered");
@@ -87,13 +98,30 @@ public final class CoreWorker implements AutoCloseable {
         temporal_java_bridge.shutdown_worker(context);
     }
 
-    private static byte[] options(String namespace, String queue, boolean localActivities) {
+    private static byte[] options(String namespace, String queue, boolean localActivities,
+                                  WorkerVersioningOptions versioning) {
         try {
             var bytes = new ByteArrayOutputStream();
             var output = new DataOutputStream(bytes);
             JavaHost.writeField(output, namespace.getBytes(StandardCharsets.UTF_8));
             JavaHost.writeField(output, queue.getBytes(StandardCharsets.UTF_8));
             output.writeBoolean(localActivities);
+            var deployment = versioning.getWorkerDeploymentOptions();
+            boolean hasDeployment = deployment != null && deployment.getVersion() != null;
+            boolean legacyVersioning = !hasDeployment && versioning.isUsingVersioning();
+            output.writeBoolean(legacyVersioning);
+            String buildId = Objects.requireNonNullElse(versioning.getBuildId(), "");
+            if (buildId.isEmpty() && !legacyVersioning) {
+                buildId = DEFAULT_BUILD_ID;
+            }
+            JavaHost.writeField(output, buildId.getBytes(StandardCharsets.UTF_8));
+            JavaHost.writeField(output, hasDeployment
+                ? WorkerVersioningProtoUtils.deploymentOptionsToProto(deployment).toByteArray() : null);
+            var defaultBehavior = hasDeployment && deployment.isUsingVersioning()
+                ? Objects.requireNonNullElse(deployment.getDefaultVersioningBehavior(),
+                    VersioningBehavior.UNSPECIFIED)
+                : VersioningBehavior.UNSPECIFIED;
+            output.writeInt(WorkerVersioningProtoUtils.behaviorToProto(defaultBehavior).getNumber());
             return bytes.toByteArray();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

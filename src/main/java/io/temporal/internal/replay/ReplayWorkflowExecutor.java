@@ -13,6 +13,7 @@ import io.temporal.api.protocol.v1.Message;
 import io.temporal.api.query.v1.WorkflowQuery;
 import io.temporal.api.update.v1.Input;
 import io.temporal.api.update.v1.Request;
+import io.temporal.common.VersioningBehavior;
 import io.temporal.failure.CanceledFailure;
 import io.temporal.internal.common.ProtobufTimeUtils;
 import io.temporal.internal.common.UpdateMessage;
@@ -257,6 +258,13 @@ final class ReplayWorkflowExecutor {
       throw new NonDeterministicException("Update received after workflow is completed.");
     }
     workflow.handleUpdate(name, id, input, eventId, header, callbacks);
+  }
+
+  VersioningBehavior versioningBehavior() {
+    WorkflowContext workflowContext = workflow.getWorkflowContext();
+    return workflowContext == null
+        ? VersioningBehavior.UNSPECIFIED
+        : workflowContext.getVersioningBehavior();
   }
 
   public Optional<Payloads> query(WorkflowQuery query) {
