@@ -16,6 +16,7 @@ import io.temporal.api.update.v1.Request;
 import io.temporal.failure.CanceledFailure;
 import io.temporal.internal.common.ProtobufTimeUtils;
 import io.temporal.internal.common.UpdateMessage;
+import io.temporal.internal.statemachines.UpdateProtocolCallback;
 import io.temporal.internal.statemachines.WorkflowStateMachines;
 import io.temporal.internal.sync.SignalHandlerInfo;
 import io.temporal.internal.sync.UpdateHandlerInfo;
@@ -91,8 +92,7 @@ final class ReplayWorkflowExecutor {
           }
 
           @Override
-          void continueAsNewWorkflow(
-              ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
+          void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
             workflowStateMachines.continueAsNewWorkflow(attributes);
           }
 
@@ -229,15 +229,12 @@ final class ReplayWorkflowExecutor {
   }
 
   public void handleWorkflowExecutionUpdated(UpdateMessage updateMessage) {
-    if (context.isWorkflowMethodCompleted()) {
-      throw new NonDeterministicException("Update received after workflow is completed.");
-    }
     try {
       Message protocolMessage = updateMessage.getMessage();
       Request update = protocolMessage.getBody().unpack(Request.class);
       Input input = update.getInput();
       Optional<Payloads> args = Optional.of(input.getArgs());
-      this.workflow.handleUpdate(
+      handleUpdate(
           input.getName(),
           update.getMeta().getUpdateId(),
           args,
@@ -247,6 +244,19 @@ final class ReplayWorkflowExecutor {
     } catch (InvalidProtocolBufferException e) {
       throw new IllegalStateException("Message is not an update.");
     }
+  }
+
+  void handleUpdate(
+      String name,
+      String id,
+      Optional<Payloads> input,
+      long eventId,
+      Header header,
+      UpdateProtocolCallback callbacks) {
+    if (context.isWorkflowMethodCompleted()) {
+      throw new NonDeterministicException("Update received after workflow is completed.");
+    }
+    workflow.handleUpdate(name, id, input, eventId, header, callbacks);
   }
 
   public Optional<Payloads> query(WorkflowQuery query) {

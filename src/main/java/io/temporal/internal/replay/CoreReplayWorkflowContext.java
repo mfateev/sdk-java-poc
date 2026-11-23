@@ -2,11 +2,13 @@ package io.temporal.internal.replay;
 
 import com.google.protobuf.util.Timestamps;
 import com.uber.m3.tally.Scope;
+import coresdk.common.Common.VersioningIntent;
 import coresdk.workflow_activation.WorkflowActivationOuterClass.InitializeWorkflow;
 import coresdk.workflow_activation.WorkflowActivationOuterClass.WorkflowActivation;
 import coresdk.workflow_commands.WorkflowCommands.CancelTimer;
 import coresdk.workflow_commands.WorkflowCommands.CancelWorkflowExecution;
 import coresdk.workflow_commands.WorkflowCommands.CompleteWorkflowExecution;
+import coresdk.workflow_commands.WorkflowCommands.ContinueAsNewWorkflowExecution;
 import coresdk.workflow_commands.WorkflowCommands.FailWorkflowExecution;
 import coresdk.workflow_commands.WorkflowCommands.ModifyWorkflowProperties;
 import coresdk.workflow_commands.WorkflowCommands.QueryResult;
@@ -29,6 +31,7 @@ import io.temporal.internal.common.ProtobufTimeUtils;
 import io.temporal.internal.common.SdkFlag;
 import io.temporal.internal.statemachines.*;
 import io.temporal.internal.worker.SingleWorkerOptions;
+import io.temporal.payload.context.WorkflowSerializationContext;
 import io.temporal.workflow.Functions;
 import io.temporal.workflow.Functions.Func;
 import io.temporal.workflow.Functions.Func1;
@@ -43,8 +46,8 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /** Adapts operations from the Java workflow runner to the Core activation protocol. */
-final class CoreReplayWorkflowContext
-    extends ReplayWorkflowExecutor.CompletionSink implements ReplayWorkflowContext {
+final class CoreReplayWorkflowContext extends ReplayWorkflowExecutor.CompletionSink
+    implements ReplayWorkflowContext {
   private final BasicWorkflowContext basicWorkflowContext;
   private final WorkflowMutableState mutableState;
   private final SingleWorkerOptions workerOptions;
@@ -52,6 +55,7 @@ final class CoreReplayWorkflowContext
   private final Map<Integer, Functions.Proc1<RuntimeException>> timers = new HashMap<>();
   private final TreeSet<Integer> usedFlags = new TreeSet<>();
   private final Random random;
+  final CoreWorkflowOperations operations = new CoreWorkflowOperations(this);
   private WorkflowActivation activation;
   private Success.Builder commands;
   private int nextTimerSequence;
@@ -144,6 +148,7 @@ final class CoreReplayWorkflowContext
     this.activation = activation;
     this.commands = Success.newBuilder();
     this.usedFlags.clear();
+    tryUseSdkFlag(SdkFlag.SKIP_YIELD_ON_DEFAULT_VERSION);
   }
 
   WorkflowActivationCompletion finishActivation() {
@@ -280,6 +285,20 @@ final class CoreReplayWorkflowContext
     mutableState.upsertMemo(memo);
   }
 
+  void addCommand(WorkflowCommand.Builder command, @Nullable UserMetadata metadata) {
+    if (metadata != null) {
+      command.setUserMetadata(metadata);
+    }
+    commands.addCommands(command);
+  }
+
+  RuntimeException decodeFailure(Failure failure, String workflowId) {
+    return workerOptions
+        .getDataConverter()
+        .withContext(new WorkflowSerializationContext(getNamespace(), workflowId))
+        .failureToException(failure);
+  }
+
   @Override
   void cancelWorkflow() {
     commands.addCommands(
@@ -296,7 +315,25 @@ final class CoreReplayWorkflowContext
 
   @Override
   void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
-    throw new UnimplementedException("continueAsNew");
+    var next =
+        ContinueAsNewWorkflowExecution.newBuilder()
+            .setWorkflowType(attributes.getWorkflowType().getName())
+            .setTaskQueue(attributes.getTaskQueue().getName())
+            .addAllArguments(attributes.getInput().getPayloadsList())
+            .putAllMemo(attributes.getMemo().getFieldsMap())
+            .putAllHeaders(attributes.getHeader().getFieldsMap())
+            .setInitialVersioningBehavior(attributes.getInitialVersioningBehavior());
+    if (attributes.hasWorkflowRunTimeout())
+      next.setWorkflowRunTimeout(attributes.getWorkflowRunTimeout());
+    if (attributes.hasWorkflowTaskTimeout())
+      next.setWorkflowTaskTimeout(attributes.getWorkflowTaskTimeout());
+    if (attributes.hasSearchAttributes())
+      next.setSearchAttributes(attributes.getSearchAttributes());
+    if (attributes.hasRetryPolicy()) next.setRetryPolicy(attributes.getRetryPolicy());
+    if (attributes.hasBackoffStartInterval())
+      next.setBackoffStartInterval(attributes.getBackoffStartInterval());
+    if (attributes.getInheritBuildId()) next.setVersioningIntent(VersioningIntent.COMPATIBLE);
+    addCommand(WorkflowCommand.newBuilder().setContinueAsNewWorkflowExecution(next), null);
   }
 
   @Override
@@ -318,7 +355,7 @@ final class CoreReplayWorkflowContext
     commands.addCommands(WorkflowCommand.newBuilder().setRespondToQuery(response));
   }
 
-  private static Payload singlePayload(Payloads payloads) {
+  static Payload singlePayload(Payloads payloads) {
     if (payloads.getPayloadsCount() > 1) {
       throw new IllegalArgumentException("Expected a single result payload");
     }
@@ -494,13 +531,13 @@ final class CoreReplayWorkflowContext
   @Override
   public ScheduleActivityTaskOutput scheduleActivityTask(
       ExecuteActivityParameters parameters, Functions.Proc2<Optional<Payloads>, Failure> callback) {
-    throw new UnimplementedException("scheduleActivityTask");
+    return operations.scheduleActivity(parameters, callback);
   }
 
   @Override
   public Functions.Proc scheduleLocalActivityTask(
       ExecuteLocalActivityParameters parameters, LocalActivityCallback callback) {
-    throw new UnimplementedException("scheduleLocalActivityTask");
+    return operations.scheduleLocalActivity(parameters, callback);
   }
 
   @Override
@@ -508,7 +545,7 @@ final class CoreReplayWorkflowContext
       StartChildWorkflowExecutionParameters parameters,
       Functions.Proc2<WorkflowExecution, Exception> startCallback,
       Functions.Proc2<Optional<Payloads>, Exception> completionCallback) {
-    throw new UnimplementedException("startChildWorkflow");
+    return operations.startChild(parameters, startCallback, completionCallback);
   }
 
   @Override
@@ -516,14 +553,14 @@ final class CoreReplayWorkflowContext
       StartNexusOperationParameters parameters,
       Functions.Proc2<Optional<String>, Failure> startedCallback,
       Functions.Proc2<Optional<Payload>, Failure> completionCallback) {
-    throw new UnimplementedException("startNexusOperation");
+    return operations.startNexus(parameters, startedCallback, completionCallback);
   }
 
   @Override
   public Functions.Proc1<Exception> signalExternalWorkflowExecution(
       SignalExternalWorkflowExecutionCommandAttributes.Builder attributes,
       Functions.Proc2<Void, Failure> callback) {
-    throw new UnimplementedException("signalExternalWorkflowExecution");
+    return operations.signalExternal(attributes, callback);
   }
 
   @Override
@@ -531,7 +568,7 @@ final class CoreReplayWorkflowContext
       WorkflowExecution execution,
       @Nullable String reason,
       Functions.Proc2<Void, RuntimeException> callback) {
-    throw new UnimplementedException("requestCancelExternalWorkflowExecution");
+    operations.requestExternalCancel(execution, reason, callback);
   }
 
   @Override
@@ -557,12 +594,12 @@ final class CoreReplayWorkflowContext
       int minSupported,
       int maxSupported,
       Functions.Proc2<Integer, RuntimeException> callback) {
-    throw new UnimplementedException("getVersion");
+    return operations.getVersion(changeId, minSupported, maxSupported, callback);
   }
 
   @Override
   public void continueAsNewOnCompletion(
       ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
-    throw new UnimplementedException("continueAsNewOnCompletion");
+    mutableState.continueAsNewOnCompletion(attributes);
   }
 }

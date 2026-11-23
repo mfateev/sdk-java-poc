@@ -145,7 +145,33 @@ public final class CoreWorkflowActivationHandler implements AutoCloseable {
             header(signal.getHeadersMap()));
       }
       case QUERY_WORKFLOW -> query(run, job.getQueryWorkflow());
-      default ->
+      case RESOLVE_ACTIVITY -> run.context.operations.resolveActivity(job.getResolveActivity());
+      case NOTIFY_HAS_PATCH ->
+          run.context.operations.notifyPatch(job.getNotifyHasPatch().getPatchId());
+      case RESOLVE_CHILD_WORKFLOW_EXECUTION_START ->
+          run.context.operations.resolveChildStart(job.getResolveChildWorkflowExecutionStart());
+      case RESOLVE_CHILD_WORKFLOW_EXECUTION ->
+          run.context.operations.resolveChild(job.getResolveChildWorkflowExecution());
+      case RESOLVE_SIGNAL_EXTERNAL_WORKFLOW ->
+          run.context.operations.resolveExternalSignal(job.getResolveSignalExternalWorkflow());
+      case RESOLVE_REQUEST_CANCEL_EXTERNAL_WORKFLOW ->
+          run.context.operations.resolveExternalCancel(
+              job.getResolveRequestCancelExternalWorkflow());
+      case DO_UPDATE -> {
+        var update = job.getDoUpdate();
+        run.executor.handleUpdate(
+            update.getName(),
+            update.getId(),
+            payloads(update.getInputList()),
+            0,
+            header(update.getHeadersMap()),
+            run.context.operations.updateCallback(update));
+      }
+      case RESOLVE_NEXUS_OPERATION_START ->
+          run.context.operations.resolveNexusStart(job.getResolveNexusOperationStart());
+      case RESOLVE_NEXUS_OPERATION ->
+          run.context.operations.resolveNexus(job.getResolveNexusOperation());
+      case REMOVE_FROM_CACHE, VARIANT_NOT_SET ->
           throw new UnsupportedOperationException(
               "Core activation job is outside the worker POC: " + job.getVariantCase());
     }

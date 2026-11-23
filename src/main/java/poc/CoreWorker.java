@@ -12,8 +12,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
-/** Runs a workflow-only SDK Core worker on a caller-owned Java gRPC channel. */
+/** Runs an SDK Core workflow worker on a caller-owned Java gRPC channel. */
 public final class CoreWorker implements AutoCloseable {
     @FunctionalInterface
     public interface ActivationHandler {
@@ -21,16 +22,27 @@ public final class CoreWorker implements AutoCloseable {
         byte[] activate(byte[] activation) throws Exception;
     }
 
+    @FunctionalInterface
+    public interface LocalActivityHandler {
+        /** Dispatches a serialized ActivityTask and returns a serialized completion asynchronously. */
+        void dispatch(byte[] task, Consumer<byte[]> complete) throws Exception;
+    }
+
     private static final AtomicLong NEXT = new AtomicLong(1);
     private final long context = NEXT.getAndIncrement();
     private final CompletableFuture<Void> completion = new CompletableFuture<>();
 
     public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler) {
+        this(channel, namespace, taskQueue, handler, null);
+    }
+
+    public CoreWorker(Channel channel, String namespace, String taskQueue, ActivationHandler handler,
+                      LocalActivityHandler localActivities) {
         if (namespace.isBlank() || taskQueue.isBlank()) {
             throw new IllegalArgumentException("namespace and task queue must be nonempty");
         }
-        byte[] config = options(namespace, taskQueue);
-        JavaHost host = new JavaHost(Objects.requireNonNull(channel), Objects.requireNonNull(handler));
+        byte[] config = options(namespace, taskQueue, localActivities != null);
+        JavaHost host = new JavaHost(Objects.requireNonNull(channel), Objects.requireNonNull(handler), localActivities);
         if (!temporal_java_bridge.register_worker(context)) {
             throw new IllegalStateException("Core worker ID already registered");
         }
@@ -57,7 +69,7 @@ public final class CoreWorker implements AutoCloseable {
         long context = NEXT.getAndIncrement();
         JavaHost host = new JavaHost(Objects.requireNonNull(channel), activation -> {
             throw new IllegalStateException("connection probe has no workflow handler");
-        });
+        }, null);
         JavaHost.attach(context, host);
         try {
             temporal_java_bridge.probe_transport(context);
@@ -75,12 +87,13 @@ public final class CoreWorker implements AutoCloseable {
         temporal_java_bridge.shutdown_worker(context);
     }
 
-    private static byte[] options(String namespace, String queue) {
+    private static byte[] options(String namespace, String queue, boolean localActivities) {
         try {
             var bytes = new ByteArrayOutputStream();
             var output = new DataOutputStream(bytes);
             JavaHost.writeField(output, namespace.getBytes(StandardCharsets.UTF_8));
             JavaHost.writeField(output, queue.getBytes(StandardCharsets.UTF_8));
+            output.writeBoolean(localActivities);
             return bytes.toByteArray();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

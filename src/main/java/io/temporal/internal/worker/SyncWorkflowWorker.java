@@ -2,6 +2,8 @@ package io.temporal.internal.worker;
 
 import io.temporal.client.WorkflowClient;
 import io.temporal.common.converter.EncodedValues;
+import io.temporal.internal.activity.ActivityTaskHandlerImpl;
+import io.temporal.internal.activity.LocalActivityExecutionContextFactoryImpl;
 import io.temporal.internal.common.WorkflowExecutionHistory;
 import io.temporal.internal.replay.CoreWorkflowActivationHandler;
 import io.temporal.internal.sync.POJOWorkflowImplementationFactory;
@@ -30,6 +32,8 @@ public final class SyncWorkflowWorker implements SuspendableWorker {
   private final String taskQueue;
   private final SingleWorkerOptions options;
   private final POJOWorkflowImplementationFactory factory;
+  private final ActivityTaskHandlerImpl localActivities;
+  private final CoreLocalActivityHandler localActivityHandler;
   private CoreWorker core;
   private CompletableFuture<Void> termination = CompletableFuture.completedFuture(null);
   private boolean shutdown;
@@ -55,6 +59,15 @@ public final class SyncWorkflowWorker implements SuspendableWorker {
     this.factory =
         new POJOWorkflowImplementationFactory(
             options, workflowThreadExecutor, options.getWorkerInterceptors(), null, namespace);
+    this.localActivities =
+        new ActivityTaskHandlerImpl(
+            namespace,
+            taskQueue,
+            localActivityOptions.getDataConverter(),
+            new LocalActivityExecutionContextFactoryImpl(client),
+            localActivityOptions.getWorkerInterceptors(),
+            localActivityOptions.getContextPropagators());
+    this.localActivityHandler = new CoreLocalActivityHandler(localActivities, localActivityOptions);
   }
 
   public void registerWorkflowImplementationTypes(
@@ -75,7 +88,7 @@ public final class SyncWorkflowWorker implements SuspendableWorker {
   }
 
   public void registerLocalActivityImplementations(Object... implementations) {
-    throw new UnsupportedOperationException("Activities are outside the Core worker POC");
+    localActivities.registerActivityImplementations(implementations);
   }
 
   @Override
@@ -89,11 +102,13 @@ public final class SyncWorkflowWorker implements SuspendableWorker {
             client.getWorkflowServiceStubs().getRawChannel(),
             namespace,
             taskQueue,
-            handler::activate);
+            handler::activate,
+            localActivityHandler::dispatch);
     termination =
         core.completion()
             .whenComplete(
                 (ignored, failure) -> {
+                  localActivityHandler.close();
                   handler.close();
                   if (failure != null) {
                     log.error("Core workflow worker exited for task queue {}", taskQueue, failure);

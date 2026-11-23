@@ -46,13 +46,15 @@ public final class JavaHost {
 
     private final Channel channel;
     private final CoreWorker.ActivationHandler handler;
+    private final CoreWorker.LocalActivityHandler localActivities;
     private final ConcurrentHashMap<Long, ClientCall<byte[], byte[]>> calls = new ConcurrentHashMap<>();
     private byte[] completion;
     volatile Throwable failure;
 
-    JavaHost(Channel channel, CoreWorker.ActivationHandler handler) {
+    JavaHost(Channel channel, CoreWorker.ActivationHandler handler, CoreWorker.LocalActivityHandler localActivities) {
         this.channel = channel;
         this.handler = handler;
+        this.localActivities = localActivities;
     }
 
     static void attach(long context, JavaHost host) {
@@ -196,6 +198,20 @@ public final class JavaHost {
         } catch (Exception e) {
             host.completion = null;
             return -1;
+        }
+    }
+
+    public static boolean dispatchLocalActivity(long context, Pointer data, int length) {
+        JavaHost host = HOSTS.get(context);
+        if (host == null || host.localActivities == null) return false;
+        try {
+            host.localActivities.dispatch(copyFromRust(data, length), completion ->
+                temporal_java_bridge.complete_local_activity(
+                    context, Pointer.array(completion, 0, 1), completion.length));
+            return true;
+        } catch (Exception e) {
+            host.failure = e;
+            return false;
         }
     }
 

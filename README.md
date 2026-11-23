@@ -20,10 +20,11 @@ API and its implementation.
 - Target JDK 21. The POC starts fresh workflow runs on Core and replays their Core-authored
   histories. The legacy Java SDK continues running workflows that started on its engine.
 
-The timer milestone covers typed workflow registration, synchronous invocation, and durable
-timers through `Workflow.sleep`, including replay after a worker restart. Worker support for
-activities, Nexus, updates, continue-as-new, side effects, version markers, and offline history
-replay is outside this milestone.
+The POC supports typed workflows, timers, signals, queries, updates, remote and local activities,
+child workflows, external workflow signals and cancellation, Nexus calls, continue-as-new, and
+`Workflow.getVersion` through Core patch markers. Core dispatches local activities to Java.
+The existing Java workers continue to poll remote activity and Nexus handler tasks. Side effects,
+mutable side effects, and offline history replay are outside the POC.
 
 ## Build
 
@@ -84,6 +85,10 @@ Temporal records workflow completion. The timer tests verify `InitializeWorkflow
 `FireTimer` in Java and workflow completion on the server. They use a two-second timer and a
 50 ms timer, respectively. The tests use a temporary local Temporal server. Logs are written to
 `build/server.log`, `build/worker.log`, and `build/workflow.log`.
+
+Run `python3 probes/verify_core_activations.py` after building the JAR to exercise the activation
+adapters on a temporary local server. The probe restarts the worker after the operation results
+are in history and verifies completion from replay.
 
 The example can also connect to an existing local server.
 

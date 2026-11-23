@@ -13,19 +13,24 @@ use std::{
 use temporalio_client::{Connection, ConnectionOptions, callback_based::CallbackBasedGrpcService};
 use temporalio_common::{
     protos::{
-        coresdk::workflow_completion::WorkflowActivationCompletion,
+        coresdk::{ActivityTaskCompletion, workflow_completion::WorkflowActivationCompletion},
         temporal::api::failure::v1::Failure,
     },
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, PollError, PollerBehavior, RuntimeOptions, WorkerConfig, WorkerVersioningStrategy,
-    init_worker,
+    CoreRuntime, PollError, PollerBehavior, RuntimeOptions, Worker, WorkerConfig,
+    WorkerVersioningStrategy, init_worker,
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMPLETION: i32 = 4 * 1024 * 1024;
 static WORKERS: LazyLock<Mutex<HashMap<i64, CancellationToken>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+type LocalActivityResults = HashMap<i64, UnboundedSender<Vec<u8>>>;
+static LOCAL_ACTIVITY_RESULTS: LazyLock<Mutex<LocalActivityResults>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 unsafe extern "C" {
@@ -34,6 +39,9 @@ unsafe extern "C" {
 
     #[link_name = "jvm:static:poc/JavaHost:copyCompletion"]
     fn copy_completion(context: i64, destination: *mut u8, length: i32) -> bool;
+
+    #[link_name = "jvm:static:poc/JavaHost:dispatchLocalActivity"]
+    fn dispatch_local_activity(context: i64, task: *const u8, length: i32) -> bool;
 
     #[link_name = "jvm:static:poc/JavaHost:workerFailed"]
     fn worker_failed(context: i64, message: *const u8, length: i32);
@@ -83,15 +91,31 @@ pub unsafe fn run_worker(context: i64, config: *const u8, length: i32) {
             .ok_or_else(|| anyhow!("invalid worker options"))?;
         let namespace = std::str::from_utf8(transport::take_field(&mut config)?)?.to_owned();
         let task_queue = std::str::from_utf8(transport::take_field(&mut config)?)?.to_owned();
+        let local_activities = match config {
+            [0] => false,
+            [1] => true,
+            _ => bail!("invalid local activity worker option"),
+        };
         let tokio = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()?;
-        tokio.block_on(run(context, stop, namespace, task_queue))
+        tokio.block_on(run(context, stop, namespace, task_queue, local_activities))
     })();
     WORKERS.lock().unwrap().remove(&context);
+    LOCAL_ACTIVITY_RESULTS.lock().unwrap().remove(&context);
     if let Err(error) = result {
         let message = format!("{error:#}");
         unsafe { worker_failed(context, message.as_ptr(), message.len() as i32) };
+    }
+}
+
+/// Enqueues a completion from the Java thread that ran the local activity.
+pub unsafe fn complete_local_activity(context: i64, data: *const u8, length: i32) {
+    let Some(bytes) = (unsafe { borrowed_bytes(data, length) }) else {
+        return;
+    };
+    if let Some(sender) = LOCAL_ACTIVITY_RESULTS.lock().unwrap().get(&context) {
+        let _ = sender.send(bytes.to_vec());
     }
 }
 
@@ -141,6 +165,7 @@ async fn run(
     stop: CancellationToken,
     namespace: String,
     task_queue: String,
+    local_activities: bool,
 ) -> anyhow::Result<()> {
     let runtime = CoreRuntime::new_assume_tokio(
         RuntimeOptions::builder()
@@ -152,10 +177,12 @@ async fn run(
         result = connect(context) => result.context("connecting through Java gRPC")?,
         _ = stop.cancelled() => return Ok(()),
     };
+    let mut task_types = WorkerTaskTypes::workflow_only();
+    task_types.enable_local_activities = local_activities;
     let config = WorkerConfig::builder()
         .namespace(namespace)
         .task_queue(task_queue)
-        .task_types(WorkerTaskTypes::workflow_only())
+        .task_types(task_types)
         .max_cached_workflows(2)
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2))
         .max_outstanding_workflow_tasks(2usize)
@@ -170,8 +197,32 @@ async fn run(
         .validate()
         .await
         .context("validating SDK Core worker")?;
+    let result = if local_activities {
+        let (sender, results) = unbounded_channel();
+        LOCAL_ACTIVITY_RESULTS
+            .lock()
+            .unwrap()
+            .insert(context, sender);
+        tokio::try_join!(
+            poll_workflows(context, &worker, stop),
+            poll_local_activities(context, &worker, results),
+        )
+        .map(|_| ())
+    } else {
+        poll_workflows(context, &worker, stop).await
+    };
+    worker.initiate_shutdown();
+    result?;
+    worker.finalize_shutdown().await;
+    Ok(())
+}
+
+async fn poll_workflows(
+    context: i64,
+    worker: &Worker,
+    stop: CancellationToken,
+) -> anyhow::Result<()> {
     let mut shutting_down = false;
-    let mut failure = None;
     loop {
         let activation = tokio::select! {
             _ = stop.cancelled(), if !shutting_down => {
@@ -183,11 +234,8 @@ async fn run(
         };
         let activation = match activation {
             Ok(activation) => activation,
-            Err(PollError::ShutDown) => break,
-            Err(err) => {
-                failure = Some(anyhow!(err).context("polling SDK Core"));
-                break;
-            }
+            Err(PollError::ShutDown) => return Ok(()),
+            Err(err) => return Err(anyhow!(err).context("polling SDK Core")),
         };
         let run_id = activation.run_id.clone();
         let completion = match activate(context, &activation.encode_to_vec(), &run_id) {
@@ -201,17 +249,40 @@ async fn run(
                 None,
             ),
         };
-        if let Err(err) = worker.complete_workflow_activation(completion).await {
-            failure = Some(anyhow!(err).context("completing SDK Core activation"));
-            break;
+        worker
+            .complete_workflow_activation(completion)
+            .await
+            .context("completing SDK Core activation")?;
+    }
+}
+
+async fn poll_local_activities(
+    context: i64,
+    worker: &Worker,
+    mut results: UnboundedReceiver<Vec<u8>>,
+) -> anyhow::Result<()> {
+    loop {
+        tokio::select! {
+            task = worker.poll_activity_task() => {
+                let task = match task {
+                    Ok(task) => task,
+                    Err(PollError::ShutDown) => return Ok(()),
+                    Err(err) => return Err(anyhow!(err).context("polling Core local activities")),
+                };
+                let bytes = task.encode_to_vec();
+                if !unsafe { dispatch_local_activity(context, bytes.as_ptr(), i32::try_from(bytes.len())?) } {
+                    bail!("Java failed to dispatch Core local activity task");
+                }
+            }
+            completion = results.recv() => {
+                let bytes = completion.ok_or_else(|| anyhow!("local activity completion channel closed"))?;
+                let completion = ActivityTaskCompletion::decode(bytes.as_slice())
+                    .context("decoding Java local activity completion")?;
+                worker.complete_activity_task(completion).await
+                    .context("completing Core local activity")?;
+            }
         }
     }
-    worker.initiate_shutdown();
-    if let Some(err) = failure {
-        return Err(err);
-    }
-    worker.finalize_shutdown().await;
-    Ok(())
 }
 
 fn activate(

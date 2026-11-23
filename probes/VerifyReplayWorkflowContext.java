@@ -15,18 +15,7 @@ import java.util.stream.Collectors;
 
 /** Executable contract check for the Java runner's Core workflow context. */
 final class VerifyReplayWorkflowContext {
-  private static final Set<String> UNIMPLEMENTED =
-      Set.of(
-          "scheduleActivityTask",
-          "scheduleLocalActivityTask",
-          "startChildWorkflow",
-          "startNexusOperation",
-          "signalExternalWorkflowExecution",
-          "requestCancelExternalWorkflowExecution",
-          "sideEffect",
-          "mutableSideEffect",
-          "getVersion",
-          "continueAsNewOnCompletion");
+  private static final Set<String> UNIMPLEMENTED = Set.of("sideEffect", "mutableSideEffect");
 
   public static void main(String[] args) throws ReflectiveOperationException {
     Class<?> contract = ReplayWorkflowContext.class;
