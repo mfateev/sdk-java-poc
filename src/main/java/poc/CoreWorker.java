@@ -75,21 +75,6 @@ public final class CoreWorker implements AutoCloseable {
         thread.start();
     }
 
-    /** Exercises the Java transport by connecting a Core client and reading server capabilities. */
-    public static void verifyTransport(Channel channel) {
-        long context = NEXT.getAndIncrement();
-        JavaHost host = new JavaHost(Objects.requireNonNull(channel), activation -> {
-            throw new IllegalStateException("connection probe has no workflow handler");
-        }, null);
-        JavaHost.attach(context, host);
-        try {
-            temporal_java_bridge.probe_transport(context);
-            if (host.failure != null) throw new IllegalStateException("Core transport probe failed", host.failure);
-        } finally {
-            JavaHost.detach(context);
-        }
-    }
-
     public CompletableFuture<Void> completion() {
         return completion.copy();
     }

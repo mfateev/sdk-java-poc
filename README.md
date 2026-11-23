@@ -31,7 +31,7 @@ Offline history replay is outside the POC.
 
 ## Build
 
-Use JDK 21, Python 3.11+, Git, curl, and Rustup. The smoke test also needs the Temporal CLI.
+Use JDK 21, Python 3.11+, Git, curl, and Rustup.
 
 ```sh
 ./bootstrap.sh
@@ -50,12 +50,7 @@ Core’s schemas, and builds one JAR containing Java and SDK Core bytecode. It p
 `build/maven-repository/`. You can set `CARGO_JVM_BACKEND_PATH` to reuse a built compiler
 checkout at the same revision. `./build.sh` also runs `./gradlew publish`.
 
-The standalone `poc-timer` build on the `codex/sdk-java-poc` branch of `samples-java`
-resolves this Maven artifact and demonstrates the public API. Its restart verifier kills the
-first worker while the first timer is pending, starts a new JVM, and checks the result and server
-history.
-
-## Verify the Java sources and context
+## Verify the SDK
 
 ```sh
 ./gradlew verifySdkJava
@@ -71,36 +66,13 @@ The verifier compares the compiled interface and its nested types with a separat
 the verbatim SDK Java sources. It checks every public instance method of the Core implementation,
 including inherited methods and generic signatures.
 It calls each unimplemented operation and checks that it throws `UnimplementedException`.
-Gradle's `check` runs this verification. After building the JAR, run
-`python3 verify_sdk_java.py` to verify the packaged classes.
+Gradle's `check` runs this verification against the packaged SDK JAR.
 
-## Run
-
-```sh
-python3 smoke.py --transport-only
-python3 smoke.py
-python3 smoke.py --timer
-python3 smoke.py --short-timer
-```
-
-The first test checks that the Core client receives server capabilities over Java gRPC. The
-second starts a Core worker, hands its initial workflow activation to Java, and verifies that
-Temporal records workflow completion. The timer tests verify `InitializeWorkflow` and
-`FireTimer` in Java and workflow completion on the server. They use a two-second timer and a
-50 ms timer, respectively. The tests use a temporary local Temporal server. Logs are written to
-`build/server.log`, `build/worker.log`, and `build/workflow.log`.
-
-Run `python3 probes/verify_core_activations.py` after building the JAR to exercise the activation
-adapters on a temporary local server. The probe restarts the worker after the operation results
-are in history and verifies completion from replay.
-
-The example can also connect to an existing local server.
+With the Temporal CLI on your path, run the activation regression test against a temporary local
+server. The test restarts the worker after the operation results are in history and verifies replay.
 
 ```sh
-java -Xss16m -cp "$(cat build/classpath.txt)" \
-  poc.TimerWorker 127.0.0.1 7233 java-poc
-
-temporal workflow execute --type TimerWorkflow --task-queue java-poc --workflow-id java-poc-timer
+./gradlew verifyCoreActivations
 ```
 
 ## Bridge surface
@@ -113,9 +85,6 @@ messages. `CoreWorkflowActivationHandler` decodes jobs, drives `ReplayWorkflowEx
 and collects typed commands from `CoreReplayWorkflowContext`. An initialize job supplies
 the start attributes used by the Java runner. A timer resolution queues the existing Java
 timer callback. An eviction closes the Java runner for that run.
-
-The low-level smoke tests exercise the bridge directly and check clean worker shutdown.
-The public timer sample exercises the SDK Java runner and the Core-backed context.
 
 ## JVM worker workarounds
 

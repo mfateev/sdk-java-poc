@@ -147,13 +147,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk-java", type=Path, default=ROOT / ".deps/sdk-java")
     parser.add_argument("--sources", "--copied-sources", type=Path, default=ROOT / "src/sdk-java/java")
-    parser.add_argument("--classpath", help="Defaults to the packaged JAR classpath in build/classpath.txt.")
+    parser.add_argument("--classpath", required=True, help="SDK JAR and runtime dependencies.")
     parser.add_argument("--java", default="java")
     args = parser.parse_args()
 
     try:
         verify_sources(args.sdk_java, args.sources)
-        classpath = args.classpath or (ROOT / "build/classpath.txt").read_text().strip()
+        classpath = args.classpath
         verify_compiled_contract(args.java, classpath, args.sources)
         subprocess.run(
             [args.java, "--class-path", classpath, str(ROOT / "probes/VerifyReplayWorkflowContext.java")],

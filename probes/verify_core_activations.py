@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the Core activation adapters through Java workflows and a worker restart."""
 
+import argparse
 from collections import Counter
 from contextlib import ExitStack
 import json
@@ -30,16 +31,17 @@ def counts(history):
     return Counter(event["eventType"] for event in history.get("events", []))
 
 
-def verify(logs):
+def verify(logs, classpath, java_executable):
     logs.mkdir(parents=True, exist_ok=True)
     classes = logs / "classes"
     classes.mkdir(exist_ok=True)
-    classpath = (ROOT / "build/classpath.txt").read_text().strip()
+    javac = java_executable.with_name("javac" + java_executable.suffix)
     subprocess.run(
-        ["javac", "-cp", classpath, "-d", str(classes), str(ROOT / "probes/CoreActivationProbe.java")],
+        [str(javac), "-cp", classpath, "-d", str(classes), str(ROOT / "probes/CoreActivationProbe.java")],
         check=True,
     )
-    java = ["java", "-Xss16m", "-cp", os.pathsep.join((str(classes), classpath)), "CoreActivationProbe"]
+    java = [str(java_executable), "-Xss16m", "-cp", os.pathsep.join((str(classes), classpath)),
+            "CoreActivationProbe"]
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -135,4 +137,8 @@ def verify(logs):
 
 
 if __name__ == "__main__":
-    verify(ROOT / "build/core-activation-verification")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--classpath", required=True, help="SDK JAR and runtime dependencies.")
+    parser.add_argument("--java", type=Path, default=Path("java"), help="Java 21 executable.")
+    args = parser.parse_args()
+    verify(ROOT / "build/core-activation-verification", args.classpath, args.java)

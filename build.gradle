@@ -161,13 +161,25 @@ tasks.named('compileJava', JavaCompile) {
 }
 
 def javaLauncher = javaToolchains.launcherFor(java.toolchain)
+def sdkRuntime = files(tasks.named('jar', Jar).flatMap { it.archiveFile }, configurations.runtimeClasspath)
 def verifySdkJava = tasks.register('verifySdkJava', Exec) {
     description = 'Verifies the checked-in SDK Java sources and the Core workflow context contract.'
     group = 'verification'
-    dependsOn tasks.named('classes')
+    dependsOn tasks.named('jar')
     doFirst {
         commandLine 'python3', 'verify_sdk_java.py',
-            '--classpath', sourceSets.main.runtimeClasspath.asPath,
+            '--classpath', sdkRuntime.asPath,
+            '--java', javaLauncher.get().executablePath.asFile.absolutePath
+    }
+}
+
+tasks.register('verifyCoreActivations', Exec) {
+    description = 'Tests Core workflow activation adapters and replay on a local Temporal server.'
+    group = 'verification'
+    dependsOn tasks.named('jar')
+    doFirst {
+        commandLine 'python3', 'probes/verify_core_activations.py',
+            '--classpath', sdkRuntime.asPath,
             '--java', javaLauncher.get().executablePath.asFile.absolutePath
     }
 }
@@ -216,28 +228,4 @@ publishing {
             url = layout.buildDirectory.dir('maven-repository')
         }
     }
-}
-
-def libraryJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
-def runtimeLibraries = configurations.runtimeClasspath
-def smokeClasspath = layout.buildDirectory.file('classpath.txt')
-def writeSmokeClasspath = tasks.register('writeSmokeClasspath') {
-    description = 'Writes the packaged SDK runtime classpath used by smoke.py.'
-    dependsOn tasks.named('jar')
-    inputs.file(libraryJar)
-    inputs.files(runtimeLibraries)
-    outputs.file(smokeClasspath)
-    doLast {
-        smokeClasspath.get().asFile.text = (
-            [libraryJar.get().asFile.absolutePath] + runtimeLibraries.files.collect { it.absolutePath }
-        ).join(File.pathSeparator) + '\n'
-    }
-}
-
-tasks.named('build') {
-    dependsOn writeSmokeClasspath
-}
-
-tasks.named('publish') {
-    dependsOn writeSmokeClasspath
 }

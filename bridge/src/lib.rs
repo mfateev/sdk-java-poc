@@ -165,28 +165,6 @@ pub fn forget_worker(context: i64) {
     WORKERS.lock().unwrap().remove(&context);
 }
 
-pub fn probe_transport(context: i64) {
-    let result = (|| {
-        let tokio = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()?;
-        tokio.block_on(async {
-            let connection =
-                tokio::time::timeout(std::time::Duration::from_secs(10), connect(context))
-                    .await??;
-            anyhow::ensure!(
-                connection.capabilities().is_some(),
-                "Temporal returned no capabilities"
-            );
-            Ok::<_, anyhow::Error>(())
-        })
-    })();
-    if let Err(error) = result {
-        let message = format!("{error:#}");
-        unsafe { worker_failed(context, message.as_ptr(), message.len() as i32) };
-    }
-}
-
 async fn connect(context: i64) -> anyhow::Result<Connection> {
     let connection_options =
         ConnectionOptions::new(temporalio_client::Url::parse("http://localhost")?)
