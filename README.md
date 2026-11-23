@@ -50,6 +50,24 @@ resolves this Maven artifact and demonstrates the public API. Its restart verifi
 first worker while the first timer is pending, starts a new JVM, and checks the result and server
 history.
 
+## Verify the Java sources and context
+
+```sh
+./gradlew verifySdkJava
+```
+
+The verifier compares the sources staged for compilation with the pinned SDK Java Git commit.
+It checks the workflow runner, its callers, and the client source byte for byte. The two local
+integration files are `ReplayWorkflowExecutor.java` and `SyncWorkflowWorker.java`. The build
+copies SDK Java’s own Java 21 virtual-thread implementation.
+
+The verifier compares the compiled interface and its nested types with a separate compilation of
+the verbatim SDK Java sources. It checks every public instance method of the Core implementation,
+including inherited methods and generic signatures.
+It calls each unimplemented operation and checks that it throws `UnimplementedException`.
+Gradle's `check` runs this verification. After building the JAR, run
+`python3 verify_sdk_java.py` to verify the packaged classes.
+
 ## Run
 
 ```sh

@@ -57,16 +57,16 @@ final class ReplayWorkflowExecutor {
 
   private final ReplayWorkflow workflow;
 
-  interface CompletionSink {
-    void cancelWorkflow();
+  abstract static class CompletionSink {
+    abstract void cancelWorkflow();
 
-    void failWorkflow(Failure failure);
+    abstract void failWorkflow(Failure failure);
 
-    void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes);
+    abstract void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes);
 
-    void completeWorkflow(Optional<Payloads> result);
+    abstract void completeWorkflow(Optional<Payloads> result);
 
-    default void recordCompletionLatency(com.uber.m3.util.Duration latency) {}
+    void recordCompletionLatency(com.uber.m3.util.Duration latency) {}
   }
 
   private final CompletionSink completion;
@@ -81,28 +81,28 @@ final class ReplayWorkflowExecutor {
         context,
         new CompletionSink() {
           @Override
-          public void cancelWorkflow() {
+          void cancelWorkflow() {
             workflowStateMachines.cancelWorkflow();
           }
 
           @Override
-          public void failWorkflow(Failure failure) {
+          void failWorkflow(Failure failure) {
             workflowStateMachines.failWorkflow(failure);
           }
 
           @Override
-          public void continueAsNewWorkflow(
+          void continueAsNewWorkflow(
               ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
             workflowStateMachines.continueAsNewWorkflow(attributes);
           }
 
           @Override
-          public void completeWorkflow(Optional<Payloads> result) {
+          void completeWorkflow(Optional<Payloads> result) {
             workflowStateMachines.completeWorkflow(result);
           }
 
           @Override
-          public void recordCompletionLatency(com.uber.m3.util.Duration latency) {
+          void recordCompletionLatency(com.uber.m3.util.Duration latency) {
             workflowStateMachines.setPostCompletionEndToEndLatency(latency);
           }
         });

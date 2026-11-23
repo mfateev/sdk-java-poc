@@ -177,6 +177,22 @@ tasks.named('compileJava', JavaCompile) {
     options.forkOptions.memoryMaximumSize = '2g'
 }
 
+def javaLauncher = javaToolchains.launcherFor(java.toolchain)
+def verifySdkJava = tasks.register('verifySdkJava', Exec) {
+    description = 'Verifies the copied SDK Java sources and the Core workflow context contract.'
+    group = 'verification'
+    dependsOn tasks.named('classes')
+    doFirst {
+        commandLine 'python3', 'verify_sdk_java.py',
+            '--classpath', sourceSets.main.runtimeClasspath.asPath,
+            '--java', javaLauncher.get().executablePath.asFile.absolutePath
+    }
+}
+
+tasks.named('check') {
+    dependsOn verifySdkJava
+}
+
 def versionResource = layout.buildDirectory.file('generated/resources/io/temporal/version.properties')
 def writeSdkVersion = tasks.register('writeSdkVersion') {
     inputs.property('version', project.version.toString())

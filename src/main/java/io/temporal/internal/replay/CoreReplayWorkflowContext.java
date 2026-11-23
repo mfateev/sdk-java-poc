@@ -44,7 +44,7 @@ import javax.annotation.Nullable;
 
 /** Adapts operations from the Java workflow runner to the Core activation protocol. */
 final class CoreReplayWorkflowContext
-    implements ReplayWorkflowContext, ReplayWorkflowExecutor.CompletionSink {
+    extends ReplayWorkflowExecutor.CompletionSink implements ReplayWorkflowContext {
   private final BasicWorkflowContext basicWorkflowContext;
   private final WorkflowMutableState mutableState;
   private final SingleWorkerOptions workerOptions;
@@ -215,6 +215,7 @@ final class CoreReplayWorkflowContext
     return activation.getContinueAsNewSuggested();
   }
 
+  @Nonnull
   @Override
   public String getRunId() {
     return getWorkflowExecution().getRunId();
@@ -222,6 +223,7 @@ final class CoreReplayWorkflowContext
 
   @Override
   public String getFullReplayDirectQueryName() {
+    // Core exposes queries through activations. This flag is for the Java legacy replay path.
     return null;
   }
 
@@ -279,26 +281,26 @@ final class CoreReplayWorkflowContext
   }
 
   @Override
-  public void cancelWorkflow() {
+  void cancelWorkflow() {
     commands.addCommands(
         WorkflowCommand.newBuilder()
             .setCancelWorkflowExecution(CancelWorkflowExecution.getDefaultInstance()));
   }
 
   @Override
-  public void failWorkflow(Failure failure) {
+  void failWorkflow(Failure failure) {
     commands.addCommands(
         WorkflowCommand.newBuilder()
             .setFailWorkflowExecution(FailWorkflowExecution.newBuilder().setFailure(failure)));
   }
 
   @Override
-  public void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
-    throw unsupported("continueAsNew");
+  void continueAsNewWorkflow(ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
+    throw new UnimplementedException("continueAsNew");
   }
 
   @Override
-  public void completeWorkflow(Optional<Payloads> result) {
+  void completeWorkflow(Optional<Payloads> result) {
     var command = CompleteWorkflowExecution.newBuilder();
     result.map(CoreReplayWorkflowContext::singlePayload).ifPresent(command::setResult);
     commands.addCommands(WorkflowCommand.newBuilder().setCompleteWorkflowExecution(command));
@@ -321,10 +323,6 @@ final class CoreReplayWorkflowContext
       throw new IllegalArgumentException("Expected a single result payload");
     }
     return payloads.getPayloadsCount() == 0 ? null : payloads.getPayloads(0);
-  }
-
-  private static UnsupportedOperationException unsupported(String operation) {
-    return new UnsupportedOperationException(operation + " is outside the Core worker POC");
   }
 
   @Override
@@ -496,13 +494,13 @@ final class CoreReplayWorkflowContext
   @Override
   public ScheduleActivityTaskOutput scheduleActivityTask(
       ExecuteActivityParameters parameters, Functions.Proc2<Optional<Payloads>, Failure> callback) {
-    throw unsupported("scheduleActivityTask");
+    throw new UnimplementedException("scheduleActivityTask");
   }
 
   @Override
   public Functions.Proc scheduleLocalActivityTask(
       ExecuteLocalActivityParameters parameters, LocalActivityCallback callback) {
-    throw unsupported("scheduleLocalActivityTask");
+    throw new UnimplementedException("scheduleLocalActivityTask");
   }
 
   @Override
@@ -510,7 +508,7 @@ final class CoreReplayWorkflowContext
       StartChildWorkflowExecutionParameters parameters,
       Functions.Proc2<WorkflowExecution, Exception> startCallback,
       Functions.Proc2<Optional<Payloads>, Exception> completionCallback) {
-    throw unsupported("startChildWorkflow");
+    throw new UnimplementedException("startChildWorkflow");
   }
 
   @Override
@@ -518,14 +516,14 @@ final class CoreReplayWorkflowContext
       StartNexusOperationParameters parameters,
       Functions.Proc2<Optional<String>, Failure> startedCallback,
       Functions.Proc2<Optional<Payload>, Failure> completionCallback) {
-    throw unsupported("startNexusOperation");
+    throw new UnimplementedException("startNexusOperation");
   }
 
   @Override
   public Functions.Proc1<Exception> signalExternalWorkflowExecution(
       SignalExternalWorkflowExecutionCommandAttributes.Builder attributes,
       Functions.Proc2<Void, Failure> callback) {
-    throw unsupported("signalExternalWorkflowExecution");
+    throw new UnimplementedException("signalExternalWorkflowExecution");
   }
 
   @Override
@@ -533,7 +531,7 @@ final class CoreReplayWorkflowContext
       WorkflowExecution execution,
       @Nullable String reason,
       Functions.Proc2<Void, RuntimeException> callback) {
-    throw unsupported("requestCancelExternalWorkflowExecution");
+    throw new UnimplementedException("requestCancelExternalWorkflowExecution");
   }
 
   @Override
@@ -541,7 +539,7 @@ final class CoreReplayWorkflowContext
       Func<Optional<Payloads>> func,
       UserMetadata metadata,
       Functions.Proc1<Optional<Payloads>> callback) {
-    throw unsupported("sideEffect");
+    throw new UnimplementedException("sideEffect");
   }
 
   @Override
@@ -550,7 +548,7 @@ final class CoreReplayWorkflowContext
       UserMetadata metadata,
       Func1<Optional<Payloads>, Optional<Payloads>> func,
       Functions.Proc1<Optional<Payloads>> callback) {
-    throw unsupported("mutableSideEffect");
+    throw new UnimplementedException("mutableSideEffect");
   }
 
   @Override
@@ -559,12 +557,12 @@ final class CoreReplayWorkflowContext
       int minSupported,
       int maxSupported,
       Functions.Proc2<Integer, RuntimeException> callback) {
-    throw unsupported("getVersion");
+    throw new UnimplementedException("getVersion");
   }
 
   @Override
   public void continueAsNewOnCompletion(
       ContinueAsNewWorkflowExecutionCommandAttributes attributes) {
-    throw unsupported("continueAsNewOnCompletion");
+    throw new UnimplementedException("continueAsNewOnCompletion");
   }
 }
