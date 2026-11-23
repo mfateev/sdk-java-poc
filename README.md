@@ -39,9 +39,12 @@ Use JDK 21, Python 3.11+, Git, curl, and Rustup.
 ./gradlew publish
 ```
 
-Bootstrap fetches the pinned SDK Java commit for source verification and checks out SDK Rust
-revision `10fdaa23`. It applies this repository's Rust patches, including the JVM build
-patch from `0fc90e3c`. It also pins the compiler to upstream
+Bootstrap fetches the pinned SDK Java commit for source verification. It checks out upstream
+[`temporalio/sdk-rust` at `10fdaa23`](https://github.com/temporalio/sdk-rust/tree/10fdaa23fec14da1aec3bfbcf06f28858c88bbfa)
+into `.deps/sdk-rust` and applies the four SDK Rust patches bundled in [`patches/`](patches/),
+including the JVM build patch from `0fc90e3c`.
+
+Bootstrap also pins the compiler to upstream
 [`experimental2` at `99ff1bd`](https://github.com/IntegralPilot/rustc_codegen_jvm/commit/99ff1bd).
 The HTTP and Tonic crate archives are checksum-verified before patching. The patches are applied
 to local copies under `.deps/`.
